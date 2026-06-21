@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from dr_queues.job import JobEnvelope
-from dr_queues.workflow import WorkflowStep
+from dr_bottleneck.job import BottleneckJob
+from dr_bottleneck.workflow.config import WorkflowStep
 
-ProcessHandler = Callable[[JobEnvelope, WorkflowStep], JobEnvelope]
+ProcessHandler = Callable[[BottleneckJob, WorkflowStep], BottleneckJob]
 
 _REGISTRY: dict[str, ProcessHandler] = {}
 

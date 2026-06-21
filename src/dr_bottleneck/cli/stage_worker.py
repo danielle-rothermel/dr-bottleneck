@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+import os
+import signal
+import time
+from pathlib import Path
+
+import typer
+from dr_queues.manifest import (
+    read_pid,
+    remove_pid,
+    stage_pid_path,
+    write_pid,
+)
+from dr_queues.pipeline import WorkerPool
+
+from dr_bottleneck.runtime.manifest import (
+    load_bottleneck_manifest,
+    manifest_path,
+)
+from dr_bottleneck.runtime.runner import create_event_sink
+from dr_bottleneck.workflow.engine import Workflow
+
+app = typer.Typer(add_completion=False)
+
+
+def _stop_pid(pid: int, *, timeout: float = 30.0) -> None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.2)
+
+
+@app.command()
+def main(
+    run_id: str | None = typer.Option(None, "--run-id"),
+    stage: str = typer.Option(..., "--stage"),
+    workers: int = typer.Option(..., "--workers"),
+    manifest: Path | None = typer.Option(None, "--manifest"),
+    replace: bool = typer.Option(False, "--replace"),
+) -> None:
+    resolved_manifest_path = manifest or (
+        manifest_path(run_id) if run_id else None
+    )
+    if resolved_manifest_path is None or not resolved_manifest_path.exists():
+        typer.echo(
+            "Manifest not found. Pass --manifest or --run-id.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    run_manifest = load_bottleneck_manifest(resolved_manifest_path)
+    stage_entry = next(
+        (item for item in run_manifest.stages if item.name == stage),
+        None,
+    )
+    if stage_entry is None:
+        typer.echo(f"Unknown stage {stage!r} in manifest.", err=True)
+        raise typer.Exit(code=1)
+
+    pid_path = stage_pid_path(run_manifest.run_id, stage)
+    if replace:
+        existing_pid = read_pid(pid_path)
+        if existing_pid is not None:
+            typer.echo(f"Stopping existing worker pid={existing_pid}...")
+            _stop_pid(existing_pid)
+            remove_pid(pid_path)
+
+    workflow = Workflow.from_yaml(
+        Path(run_manifest.workflow_path),
+        profiles_path=Path(run_manifest.profiles_path),
+    )
+    handler = workflow.make_handler(stage_entry.step_index)
+    event_sink = create_event_sink()
+    pool = WorkerPool(
+        input_queue=stage_entry.input_queue,
+        output_queue=stage_entry.output_queue,
+        handler=handler,
+        event_sink=event_sink,
+        workers=workers,
+        stage_name=stage_entry.name,
+    )
+
+    write_pid(pid_path, os.getpid())
+    typer.echo(
+        f"stage={stage} workers={workers} input={stage_entry.input_queue}",
+    )
+
+    def _shutdown(_signum: int, _frame: object) -> None:
+        typer.echo(f"Stopping stage {stage}...")
+        pool.stop()
+
+    signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGINT, _shutdown)
+
+    pool.start()
+    try:
+        while not pool._stop.is_set():
+            time.sleep(0.5)
+    finally:
+        pool.stop()
+        pool.join(timeout=5)
+        if hasattr(event_sink, "close"):
+            event_sink.close()
+        remove_pid(pid_path)
+
+
+def run() -> None:
+    app()
+
+
+if __name__ == "__main__":
+    run()

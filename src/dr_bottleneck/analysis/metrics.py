@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
+
+from dr_bottleneck.job import terminal_payload_to_job_dict
+from dr_bottleneck.storage.metrics import write_run_metrics
 
 
 def build_metrics_rows(
     terminal_payloads: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for payload in terminal_payloads:
+    for raw_payload in terminal_payloads:
+        payload = terminal_payload_to_job_dict(raw_payload)
         sample = payload.get("sample", {})
         metadata = payload.get("metadata", {})
         step_executions = payload.get("step_executions", {})
@@ -56,14 +58,6 @@ def build_metrics_rows(
     return rows
 
 
-def write_metrics_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, separators=(",", ":")))
-            handle.write("\n")
-
-
 def summarize_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     if not rows:
         return {"total": 0, "pass_rate": 0.0, "by_model": {}, "by_budget": {}}
@@ -71,11 +65,11 @@ def summarize_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     total = len(rows)
     passed = sum(int(row.get("pass", 0)) for row in rows)
     by_model: dict[str, dict[str, int | float]] = {}
-    by_budget: dict[int, dict[str, int | float]] = {}
+    by_budget: dict[str, dict[str, int | float]] = {}
 
     for row in rows:
         model = str(row.get("model", ""))
-        budget = int(row.get("budget", 0))
+        budget = str(int(row.get("budget", 0)))
         ok = int(row.get("pass", 0))
 
         model_stats = by_model.setdefault(model, {"total": 0, "passed": 0})
@@ -101,3 +95,12 @@ def summarize_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "by_model": by_model,
         "by_budget": by_budget,
     }
+
+
+def persist_run_metrics(
+    *,
+    run_id: str,
+    rows: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> None:
+    write_run_metrics(run_id=run_id, rows=rows, summary=summary)

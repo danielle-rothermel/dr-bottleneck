@@ -7,7 +7,7 @@ from typing import Any
 
 import litellm
 
-from dr_providers.openrouter import Message, build_completion_kwargs
+from dr_bottleneck.llm.openrouter import Message, build_completion_kwargs
 
 
 def _serialize_response(response: Any) -> dict[str, Any]:
@@ -40,6 +40,8 @@ def call_llm(
     reasoning_disabled: bool = False,
     effort: str | None = None,
     profile: str | None = None,
+    run_id: str | None = None,
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     kwargs = build_completion_kwargs(
         model,
@@ -57,8 +59,13 @@ def call_llm(
     record: dict[str, Any] = {
         "timestamp": datetime.now(tz=UTC).isoformat(),
         "profile": profile,
+        "run_id": run_id,
+        "job_id": job_id,
         "request": _request_for_record(kwargs),
         "response": _serialize_response(response),
         "latency_ms": latency_ms,
     }
+    from dr_bottleneck.storage.llm_calls import append_llm_call
+
+    append_llm_call(record)
     return record

@@ -4,37 +4,33 @@ from pathlib import Path
 from uuid import uuid4
 
 import typer
+from dr_queues.events.schema import EventKind
 
-from dr_queues import (
+from dr_bottleneck import (
+    DEFAULT_BUDGETS,
     TerminalTap,
     Workflow,
+    build_metrics_rows,
     build_run_report,
-    manifest_path,
-    parse_workers_arg,
-    write_run_report_jsonl,
-)
-from dr_queues.drain import DrainEventKind
-from dr_queues.humaneval_data import (
-    DEFAULT_BUDGETS,
+    create_event_sink,
     expand_experiment_jobs,
     filter_tasks,
     load_humanevalplus,
-    tiny_experiment_filters,
-)
-from dr_queues.manifest import format_worker_commands
-from dr_queues.metrics_report import (
-    build_metrics_rows,
-    summarize_metrics,
-    write_metrics_jsonl,
-)
-from dr_queues.runner import (
+    manifest_path,
+    parse_workers_arg,
     peek_run_events,
+    persist_run_metrics,
+    persist_run_report,
     run_workflow_in_process,
     seed_manifest_jobs,
     setup_run_queues,
     spawn_all_stage_workers,
+    summarize_metrics,
+    tiny_experiment_filters,
 )
-from dr_queues.workflow import WorkflowStepKind
+from dr_bottleneck.runtime import format_worker_commands
+from dr_bottleneck.storage.inspect import format_mongo_inspect_hints
+from dr_bottleneck.workflow import WorkflowStepKind
 
 DEFAULT_WORKFLOW = Path("configs/workflows/humaneval_encode_decode.yaml")
 DEFAULT_WORKERS = "encode=8,decode=8,evaluate=32"
@@ -53,6 +49,15 @@ def _parse_task_ids(value: str | None) -> list[str] | None:
     return ids or None
 
 
+def _mongo_hint(run_id: str) -> None:
+    typer.echo(
+        "Inspect results: see MONGODB_QUICKSTART.md "
+        f"(run_id={run_id})",
+    )
+    for command in format_mongo_inspect_hints(run_id, include_metrics=True):
+        typer.echo(command)
+
+
 @app.command()
 def main(
     tiny: bool = typer.Option(False, "--tiny"),
@@ -66,8 +71,6 @@ def main(
         "--profiles-path",
     ),
     run_id: str | None = typer.Option(None, "--run-id"),
-    dump_out: Path | None = typer.Option(None, "--dump-out"),
-    metrics_out: Path | None = typer.Option(None, "--metrics-out"),
     completion_timeout: float = typer.Option(3600.0, "--completion-timeout"),
     budgets: str = typer.Option(",".join(str(b) for b in DEFAULT_BUDGETS)),
     task_ids: str | None = typer.Option(None, "--task-ids"),
@@ -121,11 +124,13 @@ def main(
         expected_jobs=expected,
     )
 
+    event_sink = create_event_sink()
     final_stage = manifest.stages[-1]
     tap = TerminalTap(
         completed_queue=final_stage.output_queue,
         run_id=resolved_run_id,
         expected_count=expected,
+        event_sink=event_sink,
     )
 
     if no_wait:
@@ -154,6 +159,7 @@ def main(
             workflow=workflow,
             workers_by_stage=workers_by_stage,
             completion_timeout=completion_timeout,
+            event_sink=event_sink,
             tap=tap,
         )
     else:
@@ -167,21 +173,26 @@ def main(
             raise typer.Exit(code=1)
         tap.stop()
         tap.join(timeout=5)
+        if hasattr(event_sink, "close"):
+            event_sink.close()
 
     run_events = peek_run_events(resolved_run_id)
     terminal_payloads = [
         event["payload"]
         for event in run_events
-        if event.get("event") == DrainEventKind.TERMINAL
+        if event.get("event") == EventKind.TERMINAL
     ]
     metrics_rows = build_metrics_rows(terminal_payloads)
     summary = summarize_metrics(metrics_rows)
 
-    metrics_path = metrics_out or Path(
-        f"exports/metrics-{resolved_run_id}.jsonl",
+    persist_run_metrics(
+        run_id=resolved_run_id,
+        rows=metrics_rows,
+        summary=summary,
     )
-    write_metrics_jsonl(metrics_path, metrics_rows)
-    typer.echo(f"Wrote metrics to {metrics_path}")
+    typer.echo(
+        f"Stored metrics in MongoDB for run_id={resolved_run_id}",
+    )
     typer.echo(
         f"AST pass rate: {summary['passed']}/{summary['total']} "
         f"({summary['pass_rate']:.1%})",
@@ -198,11 +209,9 @@ def main(
         step1_name=workflow.step_name(0),
         step2_name=workflow.step_name(1),
     )
-    output_path = dump_out or Path(
-        f"exports/humaneval-{resolved_run_id}.jsonl",
-    )
-    write_run_report_jsonl(output_path, report)
-    typer.echo(f"Wrote run report to {output_path}")
+    persist_run_report(report)
+    typer.echo(f"Stored run report in MongoDB for run_id={resolved_run_id}")
+    _mongo_hint(resolved_run_id)
 
 
 if __name__ == "__main__":
