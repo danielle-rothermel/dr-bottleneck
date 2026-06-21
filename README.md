@@ -25,20 +25,50 @@ stored in pipeline events, run reports, or MongoDB logs.
 
 ```bash
 docker compose up -d
+uv sync
 ```
 
 - RabbitMQ management UI: http://localhost:15672 (guest/guest)
 - MongoDB: `mongodb://localhost:27017`
 
-See [MONGODB_QUICKSTART.md](MONGODB_QUICKSTART.md) for querying results after a
-successful run.
+## Quick start
+
+**Two-step LLM demo** (40 jobs by default):
+
+```bash
+export OPENROUTER_API_KEY=...
+uv run python scripts/run_two_step_demo.py
+```
+
+**HumanEval smoke test** (2 jobs):
+
+```bash
+export OPENROUTER_API_KEY=...
+uv run python scripts/run_humaneval_demo.py --tiny
+```
+
+Each demo prints `run_id=...` at startup and, on success, copy-paste
+`mongosh` commands for inspecting the run report (and metrics, for HumanEval).
+See [MONGODB_QUICKSTART.md](MONGODB_QUICKSTART.md) for the full query guide.
+
+Example run report command (replace with your printed `run_id`):
+
+```bash
+mongosh mongodb://localhost:27017/dr_bottleneck \
+  --eval 'db.run_reports.findOne({run_id: "demo-abc123"})'
+```
 
 ## Workflow runs (canonical pattern)
 
 Each workflow run writes a manifest at `.runs/{run_id}/manifest.json` with queue
-names, workflow paths, and per-stage worker defaults. Pipeline events go to
-MongoDB (`dr_queues.pipeline_events`); assembled reports and metrics go to
-`dr_bottleneck`.
+names, workflow paths, and per-stage worker defaults.
+
+| Database | Collection | Contents |
+|----------|------------|----------|
+| `dr_queues` | `pipeline_events` | Stage/terminal events (via dr-queues `MongoEventSink`) |
+| `dr_bottleneck` | `run_reports` | Assembled config, jobs, overlap report |
+| `dr_bottleneck` | `run_metrics` | HumanEval flat rows + pass-rate summary |
+| `dr_bottleneck` | `llm_calls` | LLM request/response logs |
 
 **Default (in-process):** one kickoff command starts all stage worker pools in
 the same process, seeds jobs, waits for completion, and persists results to
@@ -86,21 +116,13 @@ uv run python scripts/run_two_step_demo.py \
 uv run python scripts/run_two_step_demo.py --start-workers --no-wait
 ```
 
-Kickoff prints `run_id=...` and stores the run report in
-`dr_bottleneck.run_reports`. The demo exits with code 1 if the pipeline overlap
-check fails.
+Stores the run report in `dr_bottleneck.run_reports`. Exits with code 1 if the
+pipeline overlap check fails.
 
 ## HumanEval encode/decode/eval demo
 
 Runs HumanEval+ tasks through encode → decode → evaluate (zstd compression +
 AST parse).
-
-**Smoke test (2 jobs, in-process):**
-
-```bash
-export OPENROUTER_API_KEY=...
-uv run python scripts/run_humaneval_demo.py --tiny
-```
 
 **Preview prompts (no LLM calls):**
 
@@ -117,10 +139,8 @@ uv run python scripts/run_humaneval_demo.py \
   --budgets 32,64,128,256,512,1024
 ```
 
-Outputs (MongoDB):
-
-- `dr_bottleneck.run_reports` — full run report
-- `dr_bottleneck.run_metrics` — flat rows + pass-rate summary
+Stores run reports and metrics in `dr_bottleneck.run_reports` and
+`dr_bottleneck.run_metrics`.
 
 ## Single LLM query
 
@@ -134,22 +154,24 @@ Calls are stored in `dr_bottleneck.llm_calls`.
 
 ## Package layout
 
-- `src/dr_bottleneck/` — domain workflow engine, HumanEval experiments,
-  analysis, MongoDB storage, runtime orchestration, and LLM client (uses
-  dr-queues for AMQP + pipeline workers)
-- `src/dr_bottleneck/llm/` — LiteLLM / OpenRouter client and MongoDB call
-  logging
+```
+src/dr_bottleneck/
+├── llm/           # LiteLLM / OpenRouter client, Mongo call logging
+├── workflow/      # YAML workflow engine (LLM + process steps)
+├── handlers/      # Process handler registry
+├── experiments/   # HumanEval data loading and job expansion
+├── runtime/       # Manifest, queue setup, in-process/detached runner
+├── analysis/      # Run reports, metrics, overlap analysis
+├── storage/       # MongoDB persistence (reports, metrics, llm_calls)
+└── cli/           # dr-bottleneck-stage-worker entry point
+```
 
-### dr-queues dependency
+dr-bottleneck depends on the published [`dr-queues`](https://pypi.org/project/dr-queues/)
+package for AMQP plumbing, `WorkerPool`, `TerminalTap`, and pipeline event sinks.
+Domain code (workflows, HumanEval, reports, LLM client) lives in `dr_bottleneck`.
 
-dr-bottleneck imports from the published `dr-queues` package:
-
-- `WorkerPool`, `TerminalTap`, `JobEnvelope`, `seed_jobs`
-- `MongoEventSink`, `PipelineEvent`, `EventKind`
-- `build_stage_queues`, `parse_workers_arg`, manifest path helpers
-
-Domain code stays in `dr_bottleneck` — YAML workflows, LLM/process handlers,
-HumanEval job expansion, reports, and metrics.
+Mongo writes go through `storage/mongo.py`, which coerces dict keys to strings
+and validates BSON encoding before insert/replace.
 
 ### Public API (import from `dr_bottleneck`)
 
@@ -161,12 +183,15 @@ HumanEval job expansion, reports, and metrics.
 - `peek_run_events` — read pipeline events from MongoDB
 - HumanEval helpers: `load_humanevalplus`, `expand_experiment_jobs`, etc.
 
-Scripts:
+### Scripts and entry points
 
-- `scripts/run_two_step_demo.py` — two-stage LLM pipeline demo
-- `scripts/run_humaneval_demo.py` — HumanEval encode/decode/eval sweep
-- `scripts/run_stage_workers.py` — detached single-stage worker pool
-- `dr-bottleneck-stage-worker` — console entry point for detached workers
+| Command | Purpose |
+|---------|---------|
+| `scripts/run_two_step_demo.py` | Two-stage LLM pipeline demo |
+| `scripts/run_humaneval_demo.py` | HumanEval encode/decode/eval sweep |
+| `scripts/run_stage_workers.py` | Detached single-stage worker pool |
+| `scripts/query_provider.py` | Ad-hoc LLM query |
+| `dr-bottleneck-stage-worker` | Console entry point for detached workers |
 
 ## Development
 
