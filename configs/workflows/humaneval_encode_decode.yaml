@@ -3,15 +3,19 @@ steps:
   - name: encode
     kind: llm
     prompt_template: |
-      {source_code}
-
       Provide a concise natural language description of the code using at most {budget} characters.
+
+      ```python
+      {source_code}
+      ```
   - name: decode
     kind: llm
     prompt_template: |
-      {encode}
-
       Write functional code in Python according to the description.
+
+      """
+      {encode}
+      """
   - name: evaluate
     kind: process
     handler: humaneval_compress_ast
