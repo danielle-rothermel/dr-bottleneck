@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from unittest.mock import MagicMock, patch
 
-from dr_providers.client import assistant_text, call_llm
+from dr_bottleneck.llm.client import assistant_text, call_llm
 
 
 def test_call_llm_returns_record_shape() -> None:
@@ -17,7 +17,7 @@ def test_call_llm_returns_record_shape() -> None:
     with (
         patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}),
         patch(
-            "dr_providers.client.litellm.completion",
+            "dr_bottleneck.llm.client.litellm.completion",
             return_value=mock_response,
         ) as mock_completion,
     ):

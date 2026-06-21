@@ -3,18 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from dr_queues.drain import DrainEventKind
+from dr_queues.events.schema import EventKind
 
 
 def _parse_ts(value: str) -> datetime:
     return datetime.fromisoformat(value)
-
-
-def filter_run_events(
-    events: list[dict[str, Any]],
-    run_id: str,
-) -> list[dict[str, Any]]:
-    return [event for event in events if event.get("run_id") == run_id]
 
 
 def overlap_report(
@@ -26,13 +19,13 @@ def overlap_report(
     step1_outputs = [
         _parse_ts(event["timestamp"])
         for event in events
-        if event.get("event") == DrainEventKind.STAGE_OUTPUT
+        if event.get("event") == EventKind.STAGE_OUTPUT
         and event.get("stage") == step1_name
     ]
     step2_starts = [
         _parse_ts(event["timestamp"])
         for event in events
-        if event.get("event") == DrainEventKind.STAGE_STARTED
+        if event.get("event") == EventKind.STAGE_STARTED
         and event.get("stage") == step2_name
     ]
 

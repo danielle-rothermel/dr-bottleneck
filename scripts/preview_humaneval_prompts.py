@@ -5,12 +5,12 @@ from pathlib import Path
 
 import typer
 
-from dr_queues.humaneval_data import (
+from dr_bottleneck import (
     DEFAULT_BUDGETS,
+    Workflow,
     load_humanevalplus,
     make_preview_job,
 )
-from dr_queues.workflow import Workflow
 
 DEFAULT_WORKFLOW = Path("configs/workflows/humaneval_encode_decode.yaml")
 DEFAULT_ENCODE_PLACEHOLDER = "⟨encode model output⟩"

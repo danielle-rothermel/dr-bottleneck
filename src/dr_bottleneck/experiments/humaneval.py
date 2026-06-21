@@ -7,19 +7,19 @@ from typing import TYPE_CHECKING, Any
 import zstandard
 from pydantic import BaseModel
 
-from dr_queues.job import JobEnvelope, ProcessStepResult
-from dr_queues.process_handlers import register
-from dr_queues.workflow import WorkflowStep
+from dr_bottleneck.handlers.registry import register
+from dr_bottleneck.job import BottleneckJob, ProcessStepResult
+from dr_bottleneck.workflow.config import WorkflowStep
 
 if TYPE_CHECKING:
-    from dr_queues.workflow import Workflow
+    from dr_bottleneck.workflow.engine import Workflow
 
 
 @register("humaneval_compress_ast")
 def humaneval_compress_ast(
-    job: JobEnvelope,
+    job: BottleneckJob,
     step: WorkflowStep,
-) -> JobEnvelope:
+) -> BottleneckJob:
     encode_step = step.config.get("encode_step", "encode")
     decode_step = step.config.get("decode_step", "decode")
     zstd_level = int(step.config.get("zstd_level", 22))
@@ -126,8 +126,8 @@ def expand_experiment_jobs(
     budgets: list[int],
     lane_ids: list[str],
     repeats: int,
-) -> list[JobEnvelope]:
-    jobs: list[JobEnvelope] = []
+) -> list[BottleneckJob]:
+    jobs: list[BottleneckJob] = []
     for lane_id in lane_ids:
         for task in tasks:
             for budget in budgets:
@@ -139,7 +139,7 @@ def expand_experiment_jobs(
                         entry_point=task["entry_point"],
                     )
                     jobs.append(
-                        JobEnvelope(
+                        BottleneckJob(
                             run_id=run_id,
                             lane=lane_id,
                             repeat=repeat,
@@ -180,8 +180,8 @@ def make_preview_job(
     budget: int,
     workflow_id: str,
     encode_output: str = "",
-) -> JobEnvelope:
-    job = JobEnvelope(
+) -> BottleneckJob:
+    job = BottleneckJob(
         run_id="preview",
         lane="preview",
         repeat=0,

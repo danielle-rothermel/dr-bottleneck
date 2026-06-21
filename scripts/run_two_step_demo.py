@@ -5,28 +5,34 @@ from uuid import uuid4
 
 import typer
 
-from dr_queues import (
+from dr_bottleneck import (
     TerminalTap,
     Workflow,
     build_run_report,
+    create_event_sink,
     format_overlap_report,
     manifest_path,
     parse_workers_arg,
-    write_run_report_jsonl,
-)
-from dr_queues.manifest import format_worker_commands
-from dr_queues.runner import (
     peek_run_events,
+    persist_run_report,
     run_workflow_in_process,
     seed_manifest_jobs,
     setup_run_queues,
     spawn_all_stage_workers,
 )
+from dr_bottleneck.runtime import format_worker_commands
 
 DEFAULT_WORKFLOW = Path("configs/workflows/two_step_random.yaml")
 DEFAULT_WORKERS = "random_number=20,add_five=20"
 
 app = typer.Typer(add_completion=False)
+
+
+def _mongo_hint(run_id: str) -> None:
+    typer.echo(
+        "Inspect results: see MONGODB_QUICKSTART.md "
+        f"(run_id={run_id})",
+    )
 
 
 @app.command()
@@ -44,7 +50,6 @@ def main(
         "--profiles-path",
     ),
     run_id: str | None = typer.Option(None, "--run-id"),
-    dump_out: Path | None = typer.Option(None, "--dump-out"),
     completion_timeout: float = typer.Option(
         3600.0,
         "--completion-timeout",
@@ -75,11 +80,13 @@ def main(
     )
 
     jobs = workflow.make_seed_jobs(run_id=resolved_run_id, repeats=repeats)
+    event_sink = create_event_sink()
     final_stage = manifest.stages[-1]
     tap = TerminalTap(
         completed_queue=final_stage.output_queue,
         run_id=resolved_run_id,
         expected_count=expected,
+        event_sink=event_sink,
     )
 
     if no_wait:
@@ -112,6 +119,8 @@ def main(
             raise typer.Exit(code=1)
         tap.stop()
         tap.join(timeout=5)
+        if hasattr(event_sink, "close"):
+            event_sink.close()
     else:
         typer.echo("Running in-process workers...")
         run_workflow_in_process(
@@ -119,6 +128,7 @@ def main(
             workflow=workflow,
             workers_by_stage=workers_by_stage,
             completion_timeout=completion_timeout,
+            event_sink=event_sink,
             tap=tap,
         )
 
@@ -138,10 +148,9 @@ def main(
     )
 
     typer.echo(f"Jobs in report: {len(report['jobs'])}")
-
-    output_path = dump_out or Path(f"exports/run-{resolved_run_id}.jsonl")
-    write_run_report_jsonl(output_path, report)
-    typer.echo(f"Wrote run report to {output_path}")
+    persist_run_report(report)
+    typer.echo(f"Stored run report in MongoDB for run_id={resolved_run_id}")
+    _mongo_hint(resolved_run_id)
 
     typer.echo(format_overlap_report(report["overlap_report"]))
 

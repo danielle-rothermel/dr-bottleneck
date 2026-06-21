@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from dr_providers.openrouter import (
+from dr_bottleneck.llm.openrouter import (
     MissingApiKeyError,
     build_completion_kwargs,
 )

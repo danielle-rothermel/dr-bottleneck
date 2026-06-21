@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from dr_queues.analyze import overlap_report
-from dr_queues.drain import DrainEventKind
-from dr_queues.workflow import Workflow
+from dr_queues.events.schema import EventKind
+
+from dr_bottleneck.analysis.overlap import overlap_report
+from dr_bottleneck.job import terminal_payload_to_job_dict
+from dr_bottleneck.storage.reports import write_run_report
+from dr_bottleneck.workflow.engine import Workflow
 
 
 def _final_result(
@@ -23,54 +26,20 @@ def _final_result(
 
 
 def _job_from_terminal_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    step_executions = payload.get("step_executions", {})
+    job = terminal_payload_to_job_dict(payload)
+    step_executions = job.get("step_executions", {})
     stages = list(step_executions.values())
     stages.sort(key=lambda stage: stage.get("step_index", 0))
     return {
-        "job_id": payload.get("job_id"),
-        "lane": payload.get("lane"),
-        "repeat": payload.get("repeat"),
+        "job_id": job.get("job_id"),
+        "lane": job.get("lane"),
+        "repeat": job.get("repeat"),
         "stages": stages,
         "final_result": _final_result(
-            payload,
+            job,
             [stage.get("name", "") for stage in stages],
         ),
     }
-
-
-def iter_run_report_records(report: dict[str, Any]) -> list[dict[str, Any]]:
-    run_id = report["run_id"]
-    records: list[dict[str, Any]] = [
-        {
-            "record_type": "config",
-            "run_id": run_id,
-            "config": report["config"],
-        },
-    ]
-    for job in report["jobs"]:
-        records.append(
-            {
-                "record_type": "job",
-                "run_id": run_id,
-                "job": job,
-            },
-        )
-    records.append(
-        {
-            "record_type": "overlap_report",
-            "run_id": run_id,
-            "overlap_report": report["overlap_report"],
-        },
-    )
-    return records
-
-
-def write_run_report_jsonl(path: Path, report: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        for record in iter_run_report_records(report):
-            handle.write(json.dumps(record, separators=(",", ":")))
-            handle.write("\n")
 
 
 def build_run_report(
@@ -88,7 +57,7 @@ def build_run_report(
     terminal_payloads = [
         event["payload"]
         for event in run_events
-        if event.get("event") == DrainEventKind.TERMINAL
+        if event.get("event") == EventKind.TERMINAL
     ]
     terminal_payloads.sort(
         key=lambda payload: (
@@ -115,4 +84,9 @@ def build_run_report(
             step1_name=step1_name,
             step2_name=step2_name,
         ),
+        "created_at": datetime.now(tz=UTC).isoformat(),
     }
+
+
+def persist_run_report(report: dict[str, Any]) -> None:
+    write_run_report(report)

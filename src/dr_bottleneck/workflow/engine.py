@@ -1,46 +1,20 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
 
-from dr_providers.client import assistant_text, call_llm
-from dr_providers.openrouter import Message
-from dr_queues import process_handlers as _process_handlers
-from dr_queues.job import JobEnvelope, StepExecution
-
-
-class WorkflowStepKind(StrEnum):
-    LLM = "llm"
-    PROCESS = "process"
-
-
-class WorkflowStep(BaseModel):
-    name: str
-    kind: WorkflowStepKind = WorkflowStepKind.LLM
-    prompt: str | None = None
-    prompt_template: str | None = None
-    handler: str | None = None
-    config: dict[str, Any] = Field(default_factory=dict)
-
-
-class LaneStepProfile(BaseModel):
-    profile: str | None = None
-
-
-class WorkflowLane(BaseModel):
-    id: str
-    steps: list[LaneStepProfile]
-
-
-class WorkflowConfig(BaseModel):
-    id: str
-    steps: list[WorkflowStep]
-    lanes: list[WorkflowLane]
+import dr_bottleneck.handlers
+from dr_bottleneck.handlers.registry import get_process_handler
+from dr_bottleneck.job import BottleneckJob, StepExecution, adapt_handler
+from dr_bottleneck.llm.client import assistant_text, call_llm
+from dr_bottleneck.llm.openrouter import Message
+from dr_bottleneck.workflow.config import (
+    WorkflowConfig,
+    WorkflowStepKind,
+)
 
 
 class Workflow:
@@ -83,12 +57,12 @@ class Workflow:
         *,
         run_id: str,
         repeats: int,
-    ) -> list[JobEnvelope]:
-        jobs: list[JobEnvelope] = []
+    ) -> list[BottleneckJob]:
+        jobs: list[BottleneckJob] = []
         for lane in self.config.lanes:
             for repeat in range(repeats):
                 jobs.append(
-                    JobEnvelope(
+                    BottleneckJob(
                         run_id=run_id,
                         lane=lane.id,
                         repeat=repeat,
@@ -158,7 +132,7 @@ class Workflow:
     def _prompt_context(
         self,
         step_index: int,
-        job: JobEnvelope,
+        job: BottleneckJob,
     ) -> dict[str, str]:
         ctx: dict[str, str] = {
             "source_code": job.source_code,
@@ -176,7 +150,7 @@ class Workflow:
                 ctx["prev_output"] = output
         return ctx
 
-    def _build_prompt(self, step_index: int, job: JobEnvelope) -> str:
+    def _build_prompt(self, step_index: int, job: BottleneckJob) -> str:
         step = self.config.steps[step_index]
         if step.prompt is not None:
             return step.prompt
@@ -187,13 +161,13 @@ class Workflow:
         ctx = defaultdict(str, self._prompt_context(step_index, job))
         return step.prompt_template.format_map(ctx)
 
-    def build_prompt(self, step_index: int, job: JobEnvelope) -> str:
+    def build_prompt(self, step_index: int, job: BottleneckJob) -> str:
         return self._build_prompt(step_index, job)
 
     def _make_llm_handler(self, step_index: int):
         step = self.config.steps[step_index]
 
-        def handler(job: JobEnvelope) -> JobEnvelope:
+        def handler(job: BottleneckJob) -> BottleneckJob:
             profile_name = self._lane_profile(job.lane, step_index)
             resolved = self._resolve_profile(profile_name)
             prompt = self._build_prompt(step_index, job)
@@ -207,6 +181,8 @@ class Workflow:
                 reasoning_disabled=resolved["reasoning_disabled"],
                 effort=resolved["effort"],
                 profile=resolved["profile_name"],
+                run_id=job.run_id,
+                job_id=job.job_id,
             )
             text = assistant_text(record["response"])
             job.step_outputs[step.name] = text
@@ -238,9 +214,9 @@ class Workflow:
             msg = f"Process step {step.name} has no handler configured."
             raise ValueError(msg)
 
-        handler_fn = _process_handlers.get_process_handler(step.handler)
+        handler_fn = get_process_handler(step.handler)
 
-        def handler(job: JobEnvelope) -> JobEnvelope:
+        def handler(job: BottleneckJob) -> BottleneckJob:
             updated = handler_fn(job, step)
             updated.step_index = step_index + 1
             if step.name in updated.step_process_results:
@@ -255,5 +231,5 @@ class Workflow:
     def make_handler(self, step_index: int):
         step = self.config.steps[step_index]
         if step.kind == WorkflowStepKind.PROCESS:
-            return self._make_process_handler(step_index)
-        return self._make_llm_handler(step_index)
+            return adapt_handler(self._make_process_handler(step_index))
+        return adapt_handler(self._make_llm_handler(step_index))

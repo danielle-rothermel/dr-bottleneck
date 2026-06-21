@@ -1,27 +1,26 @@
 from __future__ import annotations
 
-import json
-from datetime import UTC, datetime
-from pathlib import Path
-
-from dr_providers.record import LOG_DIR, append_record, default_log_path
+from unittest.mock import MagicMock, patch
 
 
-def test_default_log_path_includes_date() -> None:
-    path = default_log_path(when=datetime(2026, 6, 21, 12, 0, tzinfo=UTC))
-    assert path == LOG_DIR / "calls-2026-06-21.jsonl"
+@patch("dr_bottleneck.storage.llm_calls.get_bottleneck_collection")
+def test_append_record_writes_to_mongo(mock_get_collection: MagicMock) -> None:
+    from dr_bottleneck.llm import append_record
 
+    collection = MagicMock()
+    mock_get_collection.return_value = collection
 
-def test_append_record_creates_dir_and_writes_jsonl(tmp_path: Path) -> None:
-    log_path = tmp_path / "nested" / "calls-2026-06-21.jsonl"
     record = {
-        "request": {"model": "openrouter/test"},
-        "response": {"ok": True},
+        "timestamp": "2026-06-21T12:00:00+00:00",
+        "profile": "openrouter/google/gemini-2.5-flash/off/v1",
+        "request": {"model": "openrouter/google/gemini-2.5-flash"},
+        "response": {"choices": []},
+        "latency_ms": 42,
     }
 
-    append_record(log_path, record)
+    append_record(None, record)
 
-    assert log_path.exists()
-    lines = log_path.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 1
-    assert json.loads(lines[0]) == record
+    collection.insert_one.assert_called_once()
+    document = collection.insert_one.call_args.args[0]
+    assert document["model"] == "openrouter/google/gemini-2.5-flash"
+    assert document["latency_ms"] == 42

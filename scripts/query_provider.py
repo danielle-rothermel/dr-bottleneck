@@ -5,12 +5,10 @@ from pathlib import Path
 import typer
 import yaml
 
-from dr_providers import (
+from dr_bottleneck.llm import (
     MissingApiKeyError,
-    append_record,
     assistant_text,
     call_llm,
-    default_log_path,
 )
 
 DEFAULT_PROFILES_PATH = Path("configs/openrouter_profiles.yaml")
@@ -90,7 +88,6 @@ def main(
         "--reasoning-disabled",
     ),
     effort: str | None = typer.Option(None, "--effort"),
-    log_file: Path | None = typer.Option(None, "--log-file"),
     profiles_path: Path = typer.Option(
         DEFAULT_PROFILES_PATH,
         "--profiles-path",
@@ -136,8 +133,11 @@ def main(
         typer.echo(f"LLM call failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
-    append_record(log_file or default_log_path(), record)
     typer.echo(assistant_text(record["response"]))
+    typer.echo(
+        "Stored LLM call in MongoDB (dr_bottleneck.llm_calls). "
+        "See MONGODB_QUICKSTART.md.",
+    )
 
 
 if __name__ == "__main__":
