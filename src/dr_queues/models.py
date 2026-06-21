@@ -30,6 +30,27 @@ class StepExecution(BaseModel):
     timestamp: str
 
 
+class SampleInfo(BaseModel):
+    task_id: str = ""
+    prompt: str = ""
+    canonical_solution: str = ""
+    entry_point: str = ""
+
+
+class JobMetadata(BaseModel):
+    budget: int = 0
+
+
+class ProcessStepResult(BaseModel):
+    step_index: int
+    name: str
+    handler: str
+    result: dict[str, Any] = Field(default_factory=dict)
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(tz=UTC).isoformat(),
+    )
+
+
 class JobEnvelope(BaseModel):
     run_id: str
     job_id: str = Field(default_factory=lambda: str(uuid4()))
@@ -38,7 +59,13 @@ class JobEnvelope(BaseModel):
     step_index: int = 0
     step_outputs: dict[str, str] = Field(default_factory=dict)
     step_executions: dict[str, StepExecution] = Field(default_factory=dict)
+    step_process_results: dict[str, ProcessStepResult] = Field(
+        default_factory=dict,
+    )
     workflow_id: str
+    sample: SampleInfo = Field(default_factory=SampleInfo)
+    metadata: JobMetadata = Field(default_factory=JobMetadata)
+    source_code: str = ""
 
     def to_json(self) -> bytes:
         return self.model_dump_json().encode("utf-8")
@@ -67,14 +94,22 @@ class DrainEvent(BaseModel):
         return cls.model_validate_json(payload)
 
 
+class WorkflowStepKind(StrEnum):
+    LLM = "llm"
+    PROCESS = "process"
+
+
 class WorkflowStep(BaseModel):
     name: str
+    kind: WorkflowStepKind = WorkflowStepKind.LLM
     prompt: str | None = None
     prompt_template: str | None = None
+    handler: str | None = None
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class LaneStepProfile(BaseModel):
-    profile: str
+    profile: str | None = None
 
 
 class WorkflowLane(BaseModel):
@@ -86,6 +121,23 @@ class WorkflowConfig(BaseModel):
     id: str
     steps: list[WorkflowStep]
     lanes: list[WorkflowLane]
+
+
+class RunStageManifest(BaseModel):
+    name: str
+    step_index: int
+    input_queue: str
+    output_queue: str
+    default_workers: int
+
+
+class RunManifest(BaseModel):
+    run_id: str
+    workflow_path: str
+    profiles_path: str
+    expected_jobs: int
+    queue_prefix: str
+    stages: list[RunStageManifest]
 
 
 class StageQueues(BaseModel):

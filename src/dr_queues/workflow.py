@@ -1,3 +1,4 @@
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -5,7 +6,13 @@ import yaml
 
 from dr_providers.client import assistant_text, call_llm
 from dr_providers.openrouter import Message
-from dr_queues.models import JobEnvelope, StepExecution, WorkflowConfig
+from dr_queues import process_handlers as _process_handlers
+from dr_queues.models import (
+    JobEnvelope,
+    StepExecution,
+    WorkflowConfig,
+    WorkflowStepKind,
+)
 
 
 class Workflow:
@@ -40,6 +47,9 @@ class Workflow:
     def lane_ids(self) -> list[str]:
         return [lane.id for lane in self.config.lanes]
 
+    def step_names(self) -> list[str]:
+        return [step.name for step in self.config.steps]
+
     def make_seed_jobs(
         self,
         *,
@@ -71,7 +81,7 @@ class Workflow:
         *,
         run_id: str,
         repeats: int,
-        workers: int,
+        workers_by_stage: dict[str, int],
         workflow_path: Path,
         profiles_path: Path,
     ) -> dict[str, Any]:
@@ -81,7 +91,7 @@ class Workflow:
             "workflow_path": str(workflow_path),
             "profiles_path": str(profiles_path),
             "repeats": repeats,
-            "workers": workers,
+            "workers_by_stage": workers_by_stage,
             "steps": [step.model_dump() for step in self.config.steps],
             "lanes": [lane.model_dump() for lane in self.config.lanes],
         }
@@ -89,7 +99,13 @@ class Workflow:
     def _lane_profile(self, lane_id: str, step_index: int) -> str:
         for lane in self.config.lanes:
             if lane.id == lane_id:
-                return lane.steps[step_index].profile
+                profile = lane.steps[step_index].profile
+                if profile is None:
+                    msg = (
+                        f"Lane {lane_id} step {step_index} has no profile."
+                    )
+                    raise ValueError(msg)
+                return profile
         msg = f"Unknown lane: {lane_id}"
         raise ValueError(msg)
 
@@ -113,6 +129,27 @@ class Workflow:
             "profile_name": profile_name,
         }
 
+    def _prompt_context(
+        self,
+        step_index: int,
+        job: JobEnvelope,
+    ) -> dict[str, str]:
+        ctx: dict[str, str] = {
+            "source_code": job.source_code,
+            "budget": str(job.metadata.budget),
+            "task_id": job.sample.task_id,
+            "entry_point": job.sample.entry_point,
+            "prompt": job.sample.prompt,
+            "canonical_solution": job.sample.canonical_solution,
+        }
+        for index, step in enumerate(self.config.steps[:step_index]):
+            output = job.step_outputs.get(step.name, "")
+            ctx[step.name] = output
+            ctx[f"{step.name}_output"] = output
+            if index == step_index - 1:
+                ctx["prev_output"] = output
+        return ctx
+
     def _build_prompt(self, step_index: int, job: JobEnvelope) -> str:
         step = self.config.steps[step_index]
         if step.prompt is not None:
@@ -121,15 +158,10 @@ class Workflow:
             msg = f"Step {step.name} has no prompt configured."
             raise ValueError(msg)
 
-        if step_index == 0:
-            msg = "prompt_template requires a previous step."
-            raise ValueError(msg)
+        ctx = defaultdict(str, self._prompt_context(step_index, job))
+        return step.prompt_template.format_map(ctx)
 
-        prev_step = self.config.steps[step_index - 1]
-        prev_output = job.step_outputs.get(prev_step.name, "")
-        return step.prompt_template.format(prev_output=prev_output)
-
-    def make_handler(self, step_index: int):
+    def _make_llm_handler(self, step_index: int):
         step = self.config.steps[step_index]
 
         def handler(job: JobEnvelope) -> JobEnvelope:
@@ -170,3 +202,29 @@ class Workflow:
             return job
 
         return handler
+
+    def _make_process_handler(self, step_index: int):
+        step = self.config.steps[step_index]
+        if step.handler is None:
+            msg = f"Process step {step.name} has no handler configured."
+            raise ValueError(msg)
+
+        handler_fn = _process_handlers.get_process_handler(step.handler)
+
+        def handler(job: JobEnvelope) -> JobEnvelope:
+            updated = handler_fn(job, step)
+            updated.step_index = step_index + 1
+            if step.name in updated.step_process_results:
+                result = updated.step_process_results[step.name]
+                updated.step_process_results[step.name] = result.model_copy(
+                    update={"step_index": step_index},
+                )
+            return updated
+
+        return handler
+
+    def make_handler(self, step_index: int):
+        step = self.config.steps[step_index]
+        if step.kind == WorkflowStepKind.PROCESS:
+            return self._make_process_handler(step_index)
+        return self._make_llm_handler(step_index)

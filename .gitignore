@@ -4,6 +4,7 @@ __pycache__/
 .cache/
 logs/
 exports/
+.runs/
 *.egg-info/
 dist/
 build/

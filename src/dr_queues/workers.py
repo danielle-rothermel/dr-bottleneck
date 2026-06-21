@@ -82,7 +82,10 @@ class WorkerPool:
         body: bytes,
     ) -> None:
         if self._stop.is_set():
-            channel.basic_nack(delivery_tag=delivery_tag(method), requeue=True)
+            channel.basic_nack(
+                delivery_tag=delivery_tag(method),
+                requeue=True,
+            )
             return
 
         job = JobEnvelope.from_json(body)
@@ -103,7 +106,11 @@ class WorkerPool:
             job = self.handler(job)
         except Exception:
             _log(self.stage_name, "failed", job)
-            raise
+            channel.basic_nack(
+                delivery_tag=delivery_tag(method),
+                requeue=True,
+            )
+            return
 
         _log(self.stage_name, "completed", job)
 
@@ -112,6 +119,7 @@ class WorkerPool:
                 publish_job(ch, self.output_queue, job.to_json())
 
         step_execution = job.step_executions.get(self.stage_name)
+        step_process_result = job.step_process_results.get(self.stage_name)
         finalize_message(
             channel,
             method,
@@ -127,6 +135,11 @@ class WorkerPool:
                     "step_execution": (
                         step_execution.model_dump()
                         if step_execution is not None
+                        else None
+                    ),
+                    "step_process_result": (
+                        step_process_result.model_dump()
+                        if step_process_result is not None
                         else None
                     ),
                 },

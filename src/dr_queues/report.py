@@ -76,7 +76,7 @@ def build_run_report(
     workflow: Workflow,
     run_id: str,
     repeats: int,
-    workers: int,
+    workers_by_stage: dict[str, int],
     workflow_path: Path,
     profiles_path: Path,
     run_events: list[dict[str, Any]],
@@ -100,7 +100,7 @@ def build_run_report(
         "config": workflow.run_config(
             run_id=run_id,
             repeats=repeats,
-            workers=workers,
+            workers_by_stage=workers_by_stage,
             workflow_path=workflow_path,
             profiles_path=profiles_path,
         ),
