@@ -161,6 +161,9 @@ class Workflow:
         ctx = defaultdict(str, self._prompt_context(step_index, job))
         return step.prompt_template.format_map(ctx)
 
+    def build_prompt(self, step_index: int, job: JobEnvelope) -> str:
+        return self._build_prompt(step_index, job)
+
     def _make_llm_handler(self, step_index: int):
         step = self.config.steps[step_index]
 

@@ -106,6 +106,36 @@ def tiny_experiment_filters(
     return lane_ids, resolved_budgets, tasks
 
 
+def make_preview_job(
+    *,
+    task: dict,
+    budget: int,
+    workflow_id: str,
+    encode_output: str = "",
+) -> JobEnvelope:
+    job = JobEnvelope(
+        run_id="preview",
+        lane="preview",
+        repeat=0,
+        step_index=0,
+        workflow_id=workflow_id,
+        sample=SampleInfo(
+            task_id=task["task_id"],
+            prompt=task["prompt"],
+            canonical_solution=task["canonical_solution"],
+            entry_point=task["entry_point"],
+        ),
+        metadata=JobMetadata(budget=budget),
+        source_code=build_source_code(
+            task["prompt"],
+            task["canonical_solution"],
+        ),
+    )
+    if encode_output:
+        job.step_outputs["encode"] = encode_output
+    return job
+
+
 def filter_tasks(
     tasks: list[dict],
     task_ids: list[str] | None,

@@ -115,6 +115,12 @@ export OPENROUTER_API_KEY=...
 uv run python scripts/run_humaneval_demo.py --tiny
 ```
 
+**Preview prompts (no LLM calls):**
+
+```bash
+uv run python scripts/preview_humaneval_prompts.py -n 3 --seed 42
+```
+
 **Full sweep:** 164 tasks × 3 models × 6 budgets × 1 repeat = 2,952 jobs.
 Full runs spawn detached stage workers by default.
 
