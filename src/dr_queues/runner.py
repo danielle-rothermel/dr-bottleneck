@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import subprocess
 import sys
 import time
@@ -48,7 +50,7 @@ def setup_run_queues(
         else:
             queues = build_stage_queues(
                 prefix=stage_prefix,
-                pending_role=previous_completed,
+                pending=previous_completed,
                 delivery_mode=delivery_mode,
             )
         stage_queues_list.append(queues)

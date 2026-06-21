@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import os
-from enum import Enum, IntEnum
+from enum import IntEnum
 from functools import lru_cache
 from typing import Any
 
 import pika
 import pika.adapters.blocking_connection as pika_blocking
-from pydantic import BaseModel, computed_field, field_validator
-
-from dr_queues.utils import load_json_body
+from pydantic import BaseModel, ConfigDict
 
 DEFAULT_AMQP_URL = "amqp://guest:guest@localhost:5672/"
 
@@ -25,17 +23,10 @@ class PikaDeliveryMode(IntEnum):
     PERSISTENT = pika.spec.PERSISTENT_DELIVERY_MODE
 
 
-class PikaDeliveryTaggedMethod(Enum):
-    GET_OK = pika.spec.Basic.GetOk
-    DELIVER = pika.spec.Basic.Deliver
-
-    @property
-    def delivery_tag(self) -> PikaDeliveryTag:
-        return self.value.delivery_tag
-
-
 class ReceivedMessage(BaseModel):
-    method: PikaDeliveryTaggedMethod | None
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    method: PikaGetOkMethod | PikaDeliveryMethod | None
     body: bytes = rb""
     properties: PikaBasicProperties | None
 
@@ -48,38 +39,27 @@ class ReceivedMessage(BaseModel):
     ) -> ReceivedMessage:
         return ReceivedMessage(
             method=method,
-            body=body,
+            body=body or b"",
             properties=properties,
         )
 
-    @field_validator("method", mode="before")
-    @classmethod
-    def ensure_method(cls, value: Any) -> Any:
-        if value is None:
-            return value
-        return PikaDeliveryTaggedMethod(value)
-
-    @computed_field
     @property
     def has_messages(self) -> bool:
-        return self.method is None
+        return self.method is not None
 
-    @computed_field
-    @property
-    def delivery_tag(self) -> PikaDeliveryTag:
-        if self.method is None:
-            raise Exception("Expected tagged message")
-        return self.method.delivery_tag
-
-    @computed_field
-    @property
-    def event(self) -> dict[str, Any]:
-        return load_json_body(self.body)
-
-    @computed_field
     @property
     def payload(self) -> tuple[bytes, PikaBasicProperties | None]:
         return (self.body, self.properties)
+
+
+def delivery_tag(
+    method: PikaDeliveryMethod | PikaGetOkMethod,
+) -> PikaDeliveryTag:
+    tag = method.delivery_tag
+    if tag is None:
+        msg = "Missing delivery tag on message."
+        raise RuntimeError(msg)
+    return tag
 
 
 def amqp_url() -> str:

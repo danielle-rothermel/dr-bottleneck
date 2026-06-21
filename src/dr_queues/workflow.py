@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections import defaultdict
 from enum import StrEnum
 from pathlib import Path
@@ -57,7 +59,7 @@ class Workflow:
         path: Path,
         *,
         profiles_path: Path | None = None,
-    ) -> "Workflow":
+    ) -> Workflow:
         with path.open(encoding="utf-8") as handle:
             raw = yaml.safe_load(handle)
         config = WorkflowConfig.model_validate(raw)
@@ -160,11 +162,11 @@ class Workflow:
     ) -> dict[str, str]:
         ctx: dict[str, str] = {
             "source_code": job.source_code,
-            "budget": str(job.metadata.budget),
-            "task_id": job.sample.task_id,
-            "entry_point": job.sample.entry_point,
-            "prompt": job.sample.prompt,
-            "canonical_solution": job.sample.canonical_solution,
+            "budget": str(job.metadata.get("budget", "")),
+            "task_id": job.sample.get("task_id", ""),
+            "entry_point": job.sample.get("entry_point", ""),
+            "prompt": job.sample.get("prompt", ""),
+            "canonical_solution": job.sample.get("canonical_solution", ""),
         }
         for index, step in enumerate(self.config.steps[:step_index]):
             output = job.step_outputs.get(step.name, "")

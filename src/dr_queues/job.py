@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -9,9 +11,23 @@ from dr_queues.connection import (
     PikaDeliveryMode,
 )
 
-type JobMetadata = Any
-type SampleInfo = Any
-type StepExecution = Any
+
+class StepExecution(BaseModel):
+    step_index: int
+    name: str
+    profile: str
+    model: str
+    temperature: float
+    top_p: float
+    reasoning_disabled: bool = False
+    effort: str | None = None
+    prompt: str
+    messages: list[dict[str, str]]
+    request: dict[str, Any]
+    response: dict[str, Any]
+    assistant_text: str
+    latency_ms: int
+    timestamp: str
 
 
 class ProcessStepResult(BaseModel):
@@ -36,21 +52,18 @@ class JobEnvelope(BaseModel):
         default_factory=dict,
     )
     workflow_id: str
-    sample: SampleInfo = Field(default_factory=dict)
-    metadata: JobMetadata = Field(default_factory=dict)
+    sample: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     source_code: str = ""
 
     def to_json(self) -> bytes:
         return self.model_dump_json().encode("utf-8")
 
     @classmethod
-    def from_json(cls, payload: bytes) -> "JobEnvelope":
+    def from_json(cls, payload: bytes) -> JobEnvelope:
         return cls.model_validate_json(payload)
 
 
-# TODO: it seems strange for seed_jobs to need to create its own session
-# and therefore know what delivery mode we want.  Check if this is the
-# right way.
 def seed_jobs(
     *,
     queue_name: str,

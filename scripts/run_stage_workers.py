@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import signal
 import time
@@ -46,7 +48,9 @@ def main(
         manifest_path(run_id) if run_id else None
     )
     if resolved_manifest_path is None or not resolved_manifest_path.exists():
-        typer.echo("Manifest not found. Pass --manifest or --run-id.", err=True)
+        typer.echo(
+            "Manifest not found. Pass --manifest or --run-id.", err=True
+        )
         raise typer.Exit(code=1)
 
     run_manifest = load_run_manifest(resolved_manifest_path)
@@ -81,8 +85,7 @@ def main(
 
     write_pid(pid_path, os.getpid())
     typer.echo(
-        f"stage={stage} workers={workers} "
-        f"input={stage_entry.input_queue}",
+        f"stage={stage} workers={workers} input={stage_entry.input_queue}",
     )
 
     def _shutdown(_signum: int, _frame: object) -> None:

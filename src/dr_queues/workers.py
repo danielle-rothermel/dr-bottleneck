@@ -1,13 +1,16 @@
+from __future__ import annotations
+
 from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum
 from threading import Event, Thread
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from dr_queues.connection import (
+    PikaBlockingChannel,
     PikaDeliveryMethod,
     PikaDeliveryMode,
-    PikaDeliveryTaggedMethod,
+    delivery_tag,
     open_connection,
     publish_job,
 )
@@ -18,10 +21,6 @@ from dr_queues.drain import (
     finalize_message,
 )
 from dr_queues.job import JobEnvelope
-
-if TYPE_CHECKING:
-    from pika.adapters.blocking_connection import BlockingChannel
-    from pika.spec import Basic
 
 JobHandler = Callable[[JobEnvelope], JobEnvelope]
 DEFAULT_STAGE_NAME = "stage"
@@ -43,7 +42,7 @@ def _log(stage: str, event: str, job: JobEnvelope) -> None:
 
 
 class WorkerPool:
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         *,
         input_queue: str,
@@ -99,15 +98,14 @@ class WorkerPool:
 
     def _on_message(
         self,
-        channel: BlockingChannel,
+        channel: PikaBlockingChannel,
         method: PikaDeliveryMethod,
         _properties: Any,
         body: bytes,
     ) -> None:
-        tagged_method = PikaDeliveryTaggedMethod(method)
-        delivery_tag = tagged_method.delivery_tag
+        tag = delivery_tag(method)
         if self._stop.is_set():
-            channel.basic_nack(delivery_tag=delivery_tag, requeue=True)
+            channel.basic_nack(delivery_tag=tag, requeue=True)
             return
 
         job = JobEnvelope.from_json(body)
@@ -128,12 +126,12 @@ class WorkerPool:
             job = self.handler(job)
         except Exception:
             _log(self.stage_name, WorkerLogStates.FAILED, job)
-            channel.basic_nack(delivery_tag=delivery_tag, requeue=True)
+            channel.basic_nack(delivery_tag=tag, requeue=True)
             return
 
         _log(self.stage_name, WorkerLogStates.COMPLETED, job)
 
-        def publish_next(ch: BlockingChannel) -> None:
+        def publish_next(ch: PikaBlockingChannel) -> None:
             if self.output_queue is not None:
                 publish_job(
                     channel=ch,
@@ -146,7 +144,7 @@ class WorkerPool:
         step_process_result = job.step_process_results.get(self.stage_name)
         finalize_message(
             channel,
-            tagged_method,
+            method,
             drain_payload=DrainEvent(
                 run_id=job.run_id,
                 job_id=job.job_id,

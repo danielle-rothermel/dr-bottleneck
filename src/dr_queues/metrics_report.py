@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import json
 from pathlib import Path
 from typing import Any
 
 
-def build_metrics_rows(terminal_payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_metrics_rows(
+    terminal_payloads: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for payload in terminal_payloads:
         sample = payload.get("sample", {})
@@ -13,7 +17,9 @@ def build_metrics_rows(terminal_payloads: list[dict[str, Any]]) -> list[dict[str
 
         decode_exec = None
         for execution in step_executions.values():
-            if decode_exec is None or execution.get("step_index", 0) > decode_exec.get(
+            if decode_exec is None or execution.get(
+                "step_index", 0
+            ) > decode_exec.get(
                 "step_index",
                 0,
             ):
@@ -21,7 +27,9 @@ def build_metrics_rows(terminal_payloads: list[dict[str, Any]]) -> list[dict[str
 
         evaluate_result: dict[str, Any] = {}
         for result in step_process_results.values():
-            if not evaluate_result or result.get("step_index", 0) >= evaluate_result.get(
+            if not evaluate_result or result.get(
+                "step_index", 0
+            ) >= evaluate_result.get(
                 "step_index",
                 0,
             ):

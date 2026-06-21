@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dr_queues.analyze import (
     filter_run_events,
     format_overlap_report,
@@ -63,7 +65,6 @@ __all__ = [
     "load_humanevalplus",
     "load_run_manifest",
     "manifest_path",
-    "open_session",
     "overlap_report",
     "parse_workers_arg",
     "peek_drain",

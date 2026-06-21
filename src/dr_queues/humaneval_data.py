@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import ast
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -11,24 +13,6 @@ from dr_queues.workflow import WorkflowStep
 
 if TYPE_CHECKING:
     from dr_queues.workflow import Workflow
-
-
-class LlmStepExecution(BaseModel):
-    step_index: int
-    name: str
-    profile: str
-    model: str
-    temperature: float
-    top_p: float
-    reasoning_disabled: bool = False
-    effort: str | None = None
-    prompt: str
-    messages: list[dict[str, str]]
-    request: dict[str, Any]
-    response: dict[str, Any]
-    assistant_text: str
-    latency_ms: int
-    timestamp: str
 
 
 @register("humaneval_compress_ast")
@@ -136,7 +120,7 @@ TINY_BUDGET = 128
 
 def expand_experiment_jobs(
     *,
-    workflow: "Workflow",
+    workflow: Workflow,
     run_id: str,
     tasks: list[dict],
     budgets: list[int],
@@ -161,8 +145,10 @@ def expand_experiment_jobs(
                             repeat=repeat,
                             step_index=0,
                             workflow_id=workflow.config.id,
-                            sample=sample,
-                            metadata=HumanEvalJobMetadata(budget=budget),
+                            sample=sample.model_dump(),
+                            metadata=HumanEvalJobMetadata(
+                                budget=budget,
+                            ).model_dump(),
                             source_code=build_source_code(
                                 task["prompt"],
                                 task["canonical_solution"],
@@ -173,7 +159,7 @@ def expand_experiment_jobs(
 
 
 def tiny_experiment_filters(
-    workflow: "Workflow",
+    workflow: Workflow,
     *,
     budgets: list[int] | None = None,
 ) -> tuple[list[str], list[int], list[dict]]:
@@ -206,8 +192,8 @@ def make_preview_job(
             prompt=task["prompt"],
             canonical_solution=task["canonical_solution"],
             entry_point=task["entry_point"],
-        ),
-        metadata=HumanEvalJobMetadata(budget=budget),
+        ).model_dump(),
+        metadata=HumanEvalJobMetadata(budget=budget).model_dump(),
         source_code=build_source_code(
             task["prompt"],
             task["canonical_solution"],

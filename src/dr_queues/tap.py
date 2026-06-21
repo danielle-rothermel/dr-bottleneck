@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 from threading import Event, Thread
 from typing import Any
 
 from dr_queues.connection import (
     PikaBlockingChannel,
     PikaDeliveryMethod,
-    PikaDeliveryTaggedMethod,
+    delivery_tag,
     open_connection,
 )
 from dr_queues.drain import DrainEvent, DrainEventKind, add_to_drain
@@ -75,9 +77,9 @@ class TerminalTap:
         body: bytes,
     ) -> None:
         job = JobEnvelope.from_json(body)
-        delivery_tag = PikaDeliveryTaggedMethod(method).delivery_tag
+        tag = delivery_tag(method)
         if job.run_id != self.run_id:
-            channel.basic_ack(delivery_tag=delivery_tag)
+            channel.basic_ack(delivery_tag=tag)
             return
 
         add_to_drain(
@@ -91,7 +93,7 @@ class TerminalTap:
                 payload=job.model_dump(),
             ),
         )
-        channel.basic_ack(delivery_tag=delivery_tag)
+        channel.basic_ack(delivery_tag=tag)
 
         self.terminal_count += 1
         if self.terminal_count >= self.expected_count:

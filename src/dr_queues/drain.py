@@ -1,25 +1,24 @@
+from __future__ import annotations
+
 from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from dr_queues.connection import (
     ChannelSession,
+    PikaBasicProperties,
     PikaBlockingChannel,
+    PikaDeliveryMethod,
     PikaDeliveryMode,
-    PikaDeliveryTaggedMethod,
     ReceivedMessage,
+    delivery_tag,
     make_delivery_props,
     publish_job,
 )
 from dr_queues.utils import load_json_body
-
-# TODO: why is this complaining?
-if TYPE_CHECKING:
-    from pika import BasicProperties
-
 
 DRAIN_QUEUE = "dr.drain"
 
@@ -50,7 +49,7 @@ class DrainEvent(BaseModel):
         return self.model_dump_json().encode("utf-8")
 
     @classmethod
-    def from_json(cls, payload: bytes) -> "DrainEvent":
+    def from_json(cls, payload: bytes) -> DrainEvent:
         return cls.model_validate_json(payload)
 
 
@@ -103,9 +102,8 @@ def peek_drain(
     )
 
     events: list[dict[str, Any]] = []
-    payloads: list[tuple[bytes, BasicProperties | None]] = []
-    has_messages: bool = True
-    while has_messages:
+    payloads: list[tuple[bytes, PikaBasicProperties | None]] = []
+    while True:
         message_obj = ReceivedMessage.from_get_tuple(
             *channel.basic_get(
                 queue=queue_name,
@@ -114,12 +112,13 @@ def peek_drain(
         )
         if not message_obj.has_messages:
             break
-        events.append(message_obj.event)
+        method = message_obj.method
+        if method is None:
+            break
+        events.append(load_json_body(message_obj.body))
         payloads.append(message_obj.payload)
-        channel.basic_ack(delivery_tag=message_obj.delivery_tag)
+        channel.basic_ack(delivery_tag=delivery_tag(method))
 
-    # TODO: is the potential delivery mode mismatch if it is set in properties
-    # and in peek_drain params an issue?
     default_props = make_delivery_props(delivery_mode=delivery_mode)
     for body, properties in payloads:
         publish_job(
@@ -158,7 +157,7 @@ def dump_drain(
 
 def finalize_message(
     channel: PikaBlockingChannel,
-    method: PikaDeliveryTaggedMethod,
+    method: PikaDeliveryMethod,
     *,
     drain_payload: DrainEvent,
     publish_fn: Callable[[PikaBlockingChannel], None] | None = None,
@@ -166,4 +165,4 @@ def finalize_message(
     add_to_drain(channel, drain_payload)
     if publish_fn is not None:
         publish_fn(channel)
-    channel.basic_ack(delivery_tag=method.delivery_tag)
+    channel.basic_ack(delivery_tag=delivery_tag(method))
