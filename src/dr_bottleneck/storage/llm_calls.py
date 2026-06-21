@@ -7,6 +7,7 @@ from uuid import uuid4
 from dr_bottleneck.storage.mongo import (
     ensure_bottleneck_indexes,
     get_bottleneck_collection,
+    insert_prepared_document,
 )
 
 LLM_CALLS_COLLECTION = "llm_calls"
@@ -29,4 +30,4 @@ def append_llm_call(record: dict[str, Any]) -> None:
         "response": record.get("response", {}),
         "latency_ms": record.get("latency_ms", 0),
     }
-    collection.insert_one(document)
+    insert_prepared_document(collection, document)

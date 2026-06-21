@@ -65,11 +65,11 @@ def summarize_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     total = len(rows)
     passed = sum(int(row.get("pass", 0)) for row in rows)
     by_model: dict[str, dict[str, int | float]] = {}
-    by_budget: dict[int, dict[str, int | float]] = {}
+    by_budget: dict[str, dict[str, int | float]] = {}
 
     for row in rows:
         model = str(row.get("model", ""))
-        budget = int(row.get("budget", 0))
+        budget = str(int(row.get("budget", 0)))
         ok = int(row.get("pass", 0))
 
         model_stats = by_model.setdefault(model, {"total": 0, "passed": 0})

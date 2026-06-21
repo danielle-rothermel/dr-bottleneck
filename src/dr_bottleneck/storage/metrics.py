@@ -6,6 +6,7 @@ from typing import Any
 from dr_bottleneck.storage.mongo import (
     ensure_bottleneck_indexes,
     get_bottleneck_collection,
+    replace_prepared_document,
 )
 
 RUN_METRICS_COLLECTION = "run_metrics"
@@ -25,4 +26,9 @@ def write_run_metrics(
         "rows": rows,
         "summary": summary,
     }
-    collection.replace_one({"run_id": run_id}, document, upsert=True)
+    replace_prepared_document(
+        collection,
+        filter_doc={"run_id": run_id},
+        document=document,
+        upsert=True,
+    )

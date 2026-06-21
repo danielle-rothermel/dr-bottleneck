@@ -4,6 +4,7 @@ from dr_bottleneck.analysis.metrics import (
     build_metrics_rows,
     summarize_metrics,
 )
+from dr_bottleneck.storage.mongo import assert_mongo_safe_document
 
 
 def test_build_metrics_rows_from_terminal_payload() -> None:
@@ -55,3 +56,5 @@ def test_summarize_metrics() -> None:
     assert summary["passed"] == 1
     assert summary["pass_rate"] == 0.5
     assert summary["by_model"]["m1"]["pass_rate"] == 0.5
+    assert summary["by_budget"]["64"]["pass_rate"] == 0.5
+    assert_mongo_safe_document({"run_id": "run-1", "summary": summary, "rows": rows})
