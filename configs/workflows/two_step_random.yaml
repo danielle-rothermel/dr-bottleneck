@@ -1,0 +1,27 @@
+id: two_step_random
+steps:
+  - name: random_number
+    prompt: >-
+      Give me a single random integer between 1 and 100.
+      Reply with only the number.
+  - name: add_five
+    prompt_template: >-
+      Add 5 to this number: {prev_output}. Reply with only the result.
+
+lanes:
+  - id: lane-a
+    steps:
+      - profile: openrouter/google/gemini-2.5-flash/off/v1
+      - profile: openrouter/google/gemini-2.5-flash-lite/off/v1
+  - id: lane-b
+    steps:
+      - profile: openrouter/google/gemini-3.1-flash-lite/off/v1
+      - profile: openrouter/google/gemini-2.5-flash/off/v1
+  - id: lane-c
+    steps:
+      - profile: openrouter/google/gemini-2.5-flash-lite/off/v1
+      - profile: openrouter/google/gemini-3.1-flash-lite/off/v1
+  - id: lane-d
+    steps:
+      - profile: openrouter/xiaomi/mimo-v2.5/off/v1
+      - profile: openrouter/openai/gpt-oss-20b/low/v1

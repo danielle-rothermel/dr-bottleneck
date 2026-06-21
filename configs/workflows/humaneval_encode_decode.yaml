@@ -1,0 +1,42 @@
+id: humaneval_encode_decode_eval
+steps:
+  - name: encode
+    kind: llm
+    prompt_template: |
+      Provide a concise natural language description of the code using at most {budget} characters.
+
+      ```python
+      {source_code}
+      ```
+  - name: decode
+    kind: llm
+    prompt_template: |
+      Write functional code in Python according to the description.
+
+      """
+      {encode}
+      """
+  - name: evaluate
+    kind: process
+    handler: humaneval_compress_ast
+    config:
+      encode_step: encode
+      decode_step: decode
+      zstd_level: 22
+
+lanes:
+  - id: nemotron
+    steps:
+      - profile: openrouter/nvidia/llama-3.3-nemotron-super-49b-v1.5/off/v1
+      - profile: openrouter/nvidia/llama-3.3-nemotron-super-49b-v1.5/off/v1
+      - profile: null
+  - id: gemini
+    steps:
+      - profile: openrouter/google/gemini-3.1-flash-lite/off/v1
+      - profile: openrouter/google/gemini-3.1-flash-lite/off/v1
+      - profile: null
+  - id: gpt-oss
+    steps:
+      - profile: openrouter/openai/gpt-oss-20b/low/v1
+      - profile: openrouter/openai/gpt-oss-20b/low/v1
+      - profile: null

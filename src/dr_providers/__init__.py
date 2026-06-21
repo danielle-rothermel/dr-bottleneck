@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dr_providers.client import assistant_text, call_llm
 from dr_providers.openrouter import MissingApiKeyError, build_completion_kwargs
 from dr_providers.record import LOG_DIR, append_record, default_log_path

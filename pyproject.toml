@@ -8,11 +8,14 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "datasets>=5.0.0",
     "litellm>=1.89.3",
     "marimo[recommended]>=0.23.10",
+    "pika>=1.4.1",
     "pydantic>=2.13.4",
     "pyyaml>=6.0.3",
     "typer>=0.26.7",
+    "zstandard>=0.25.0",
 ]
 
 [build-system]
@@ -38,14 +41,8 @@ select = [
     "A",
     "ARG",
     "ASYNC",
-    "B",
-    "BLE",
-    "C4",
     "DTZ",
-    "E",
-    "F",
     "FA",
-    "FBT",
     "FLY",
     "FURB",
     "G",
@@ -56,31 +53,19 @@ select = [
     "N",
     "NPY",
     "PD",
-    "PERF",
     "PIE",
-    "PL",
     "PTH",
     "PT",
     "RET",
     "RSE",
     "RUF",
-    "S",
-    "SIM",
     "SLOT",
     "T10",
-    "TC",
     "TID",
-    "TRY",
     "UP",
     "W",
     "YTT",
 ]
-ignore = ["PLR1711", "S101", "TRY003"]
-
-[tool.ruff.lint.per-file-ignores]
-"nbs/**/*.py" = ["E501", "F841", "RET503", "B018"]
-"scripts/query_provider.py" = ["B008", "FBT001", "FBT003", "PLR0913"]
-"src/dr_providers/*.py" = ["PLR0913"]
 
 [tool.ty.src]
 include = ["scripts", "src"]
