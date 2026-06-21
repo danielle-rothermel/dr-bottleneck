@@ -1,18 +1,44 @@
 from collections import defaultdict
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import BaseModel, Field
 
 from dr_providers.client import assistant_text, call_llm
 from dr_providers.openrouter import Message
 from dr_queues import process_handlers as _process_handlers
-from dr_queues.models import (
-    JobEnvelope,
-    StepExecution,
-    WorkflowConfig,
-    WorkflowStepKind,
-)
+from dr_queues.job import JobEnvelope, StepExecution
+
+
+class WorkflowStepKind(StrEnum):
+    LLM = "llm"
+    PROCESS = "process"
+
+
+class WorkflowStep(BaseModel):
+    name: str
+    kind: WorkflowStepKind = WorkflowStepKind.LLM
+    prompt: str | None = None
+    prompt_template: str | None = None
+    handler: str | None = None
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class LaneStepProfile(BaseModel):
+    profile: str | None = None
+
+
+class WorkflowLane(BaseModel):
+    id: str
+    steps: list[LaneStepProfile]
+
+
+class WorkflowConfig(BaseModel):
+    id: str
+    steps: list[WorkflowStep]
+    lanes: list[WorkflowLane]
 
 
 class Workflow:
@@ -101,9 +127,7 @@ class Workflow:
             if lane.id == lane_id:
                 profile = lane.steps[step_index].profile
                 if profile is None:
-                    msg = (
-                        f"Lane {lane_id} step {step_index} has no profile."
-                    )
+                    msg = f"Lane {lane_id} step {step_index} has no profile."
                     raise ValueError(msg)
                 return profile
         msg = f"Unknown lane: {lane_id}"

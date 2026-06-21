@@ -4,15 +4,21 @@ import time
 from pathlib import Path
 
 from dr_queues.analyze import filter_run_events
-from dr_queues.connection import open_session
+from dr_queues.connection import PikaDeliveryMode
 from dr_queues.drain import ensure_drain_queue, peek_drain
-from dr_queues.manifest import manifest_path, write_run_manifest
-from dr_queues.models import JobEnvelope, RunManifest, RunStageManifest
+from dr_queues.job import JobEnvelope, seed_jobs
+from dr_queues.manifest import (
+    RunManifest,
+    RunStageManifest,
+    manifest_path,
+    write_run_manifest,
+)
 from dr_queues.queues import build_stage_queues
-from dr_queues.seed import seed_jobs
 from dr_queues.tap import TerminalTap
 from dr_queues.workers import WorkerPool
 from dr_queues.workflow import Workflow
+
+RUNNER_QUEUE_PREFIX = "demo"
 
 
 def setup_run_queues(
@@ -23,14 +29,11 @@ def setup_run_queues(
     workflow_path: Path,
     profiles_path: Path,
     expected_jobs: int,
+    delivery_mode: PikaDeliveryMode = PikaDeliveryMode.PERSISTENT,
 ) -> RunManifest:
-    setup_session = open_session()
-    try:
-        ensure_drain_queue(setup_session.channel)
-    finally:
-        setup_session.close()
+    ensure_drain_queue(delivery_mode=delivery_mode)
 
-    prefix = f"demo.{run_id}"
+    prefix = f"{RUNNER_QUEUE_PREFIX}.{run_id}"
     stage_count = len(workflow.config.steps)
     stage_queues_list = []
     previous_completed: str | None = None
@@ -38,11 +41,15 @@ def setup_run_queues(
     for index in range(stage_count):
         stage_prefix = f"{prefix}.s{index + 1}"
         if index == 0:
-            queues = build_stage_queues(prefix=stage_prefix)
+            queues = build_stage_queues(
+                prefix=stage_prefix,
+                delivery_mode=delivery_mode,
+            )
         else:
             queues = build_stage_queues(
                 prefix=stage_prefix,
-                pending=previous_completed,
+                pending_role=previous_completed,
+                delivery_mode=delivery_mode,
             )
         stage_queues_list.append(queues)
         previous_completed = queues.completed_name
@@ -181,11 +188,7 @@ def spawn_all_stage_workers(
 
 
 def peek_run_events(run_id: str) -> list[dict]:
-    drain_session = open_session()
-    try:
-        events = peek_drain(drain_session.channel)
-    finally:
-        drain_session.close()
+    events = peek_drain()
     return filter_run_events(events, run_id)
 
 
@@ -194,4 +197,8 @@ def first_stage_input(manifest: RunManifest) -> str:
 
 
 def seed_manifest_jobs(manifest: RunManifest, jobs: list[JobEnvelope]) -> None:
-    seed_jobs(first_stage_input(manifest), jobs)
+    seed_jobs(
+        queue_name=first_stage_input(manifest),
+        jobs=jobs,
+        delivery_mode=PikaDeliveryMode.PERSISTENT,
+    )

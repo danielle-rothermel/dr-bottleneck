@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from dr_queues.analyze import overlap_report
-from dr_queues.models import DrainEventKind
+from dr_queues.drain import DrainEventKind
 from dr_queues.workflow import Workflow
 
 

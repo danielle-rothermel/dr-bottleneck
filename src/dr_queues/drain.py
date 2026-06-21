@@ -1,101 +1,169 @@
-import json
 from collections.abc import Callable
-from typing import Any
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
 
-import pika
-from pika.adapters.blocking_connection import BlockingChannel
-from pika.spec import Basic, BasicProperties
+from pydantic import BaseModel, Field
 
-from dr_queues.connection import declare_durable_queue, delivery_tag
-from dr_queues.models import DrainEvent
+from dr_queues.connection import (
+    ChannelSession,
+    PikaBlockingChannel,
+    PikaDeliveryMode,
+    PikaDeliveryTaggedMethod,
+    ReceivedMessage,
+    make_delivery_props,
+    publish_job,
+)
+from dr_queues.utils import load_json_body
+
+# TODO: why is this complaining?
+if TYPE_CHECKING:
+    from pika import BasicProperties
+
 
 DRAIN_QUEUE = "dr.drain"
 
 
-def ensure_drain_queue(channel: BlockingChannel) -> None:
-    declare_durable_queue(channel, DRAIN_QUEUE)
+class DrainAction(StrEnum):
+    PEEK_DRAIN = "peek_drain"
+    DUMP_DRAIN = "dump_drain"
 
 
-def add_to_drain(channel: BlockingChannel, event: DrainEvent) -> None:
-    ensure_drain_queue(channel)
-    channel.basic_publish(
-        exchange="",
-        routing_key=DRAIN_QUEUE,
-        body=event.to_json(),
-        properties=pika.BasicProperties(delivery_mode=2),
+class DrainEventKind(StrEnum):
+    STAGE_STARTED = "stage_started"
+    STAGE_OUTPUT = "stage_output"
+    TERMINAL = "terminal"
+
+
+class DrainEvent(BaseModel):
+    run_id: str
+    job_id: str
+    lane: str
+    stage: str
+    event: DrainEventKind
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(tz=UTC).isoformat(),
     )
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+    def to_json(self) -> bytes:
+        return self.model_dump_json().encode("utf-8")
+
+    @classmethod
+    def from_json(cls, payload: bytes) -> "DrainEvent":
+        return cls.model_validate_json(payload)
 
 
-def finalize_message(
-    channel: BlockingChannel,
-    method: Basic.Deliver,
+def ensure_drain_queue(
     *,
-    drain_payload: DrainEvent,
-    publish_fn: Callable[[BlockingChannel], None] | None = None,
+    delivery_mode: PikaDeliveryMode,
+    channel: PikaBlockingChannel | None = None,
+    queue_name: str = DRAIN_QUEUE,
 ) -> None:
-    add_to_drain(channel, drain_payload)
-    if publish_fn is not None:
-        publish_fn(channel)
-    channel.basic_ack(delivery_tag=delivery_tag(method))
-
-
-def publish_job(
-    channel: BlockingChannel,
-    queue_name: str,
-    body: bytes,
-) -> None:
-    channel.basic_publish(
-        exchange="",
-        routing_key=queue_name,
-        body=body,
-        properties=BasicProperties(delivery_mode=2),
+    ChannelSession.ensure_durable_queue(
+        queue_name=queue_name,
+        channel=channel,
+        delivery_mode=delivery_mode,
     )
 
 
-def _read_body(body: bytes | None) -> dict[str, Any]:
-    if body is None:
-        msg = "Drain message body was empty."
-        raise RuntimeError(msg)
-    return json.loads(body.decode("utf-8"))
+def add_to_drain(
+    channel: PikaBlockingChannel,
+    event: DrainEvent,
+    *,
+    queue_name: str = DRAIN_QUEUE,
+    delivery_mode: PikaDeliveryMode = PikaDeliveryMode.PERSISTENT,
+) -> None:
+    ensure_drain_queue(
+        channel=channel,
+        queue_name=queue_name,
+        delivery_mode=delivery_mode,
+    )
+    publish_job(
+        channel=channel,
+        queue_name=queue_name,
+        body=event.to_json(),
+        properties=make_delivery_props(delivery_mode=delivery_mode),
+    )
 
 
-def peek_drain(channel: BlockingChannel) -> list[dict[str, Any]]:
-    ensure_drain_queue(channel)
+def peek_drain(
+    *,
+    channel: PikaBlockingChannel | None = None,
+    queue_name: str = DRAIN_QUEUE,
+    delivery_mode: PikaDeliveryMode = PikaDeliveryMode.PERSISTENT,
+) -> list[dict[str, Any]]:
+    drain_session, channel = ChannelSession.ensure_channel(
+        channel=channel, delivery_mode=delivery_mode
+    )
+    ensure_drain_queue(
+        channel=channel,
+        queue_name=queue_name,
+        delivery_mode=delivery_mode,
+    )
+
     events: list[dict[str, Any]] = []
     payloads: list[tuple[bytes, BasicProperties | None]] = []
-    while True:
-        method, properties, body = channel.basic_get(
-            queue=DRAIN_QUEUE,
-            auto_ack=False,
+    has_messages: bool = True
+    while has_messages:
+        message_obj = ReceivedMessage.from_get_tuple(
+            *channel.basic_get(
+                queue=queue_name,
+                auto_ack=False,
+            )
         )
-        if method is None:
+        if not message_obj.has_messages:
             break
-        if body is None:
-            channel.basic_ack(delivery_tag=delivery_tag(method))
-            continue
-        events.append(_read_body(body))
-        payloads.append((body, properties))
-        channel.basic_ack(delivery_tag=delivery_tag(method))
+        events.append(message_obj.event)
+        payloads.append(message_obj.payload)
+        channel.basic_ack(delivery_tag=message_obj.delivery_tag)
 
+    # TODO: is the potential delivery mode mismatch if it is set in properties
+    # and in peek_drain params an issue?
+    default_props = make_delivery_props(delivery_mode=delivery_mode)
     for body, properties in payloads:
-        channel.basic_publish(
-            exchange="",
-            routing_key=DRAIN_QUEUE,
+        publish_job(
+            channel=channel,
+            queue_name=queue_name,
             body=body,
-            properties=properties or BasicProperties(delivery_mode=2),
+            properties=properties or default_props,
         )
+    if drain_session is not None:
+        drain_session.close()
     return events
 
 
-def dump_drain(channel: BlockingChannel) -> list[dict[str, Any]]:
-    ensure_drain_queue(channel)
+def dump_drain(
+    channel: PikaBlockingChannel,
+    *,
+    queue_name: str = DRAIN_QUEUE,
+    delivery_mode: PikaDeliveryMode = PikaDeliveryMode.PERSISTENT,
+) -> list[dict[str, Any]]:
+    ensure_drain_queue(
+        channel=channel,
+        queue_name=queue_name,
+        delivery_mode=delivery_mode,
+    )
     events: list[dict[str, Any]] = []
     while True:
         method, _properties, body = channel.basic_get(
-            queue=DRAIN_QUEUE,
+            queue=queue_name,
             auto_ack=True,
         )
         if method is None:
             break
-        events.append(_read_body(body))
+        events.append(load_json_body(body))
     return events
+
+
+def finalize_message(
+    channel: PikaBlockingChannel,
+    method: PikaDeliveryTaggedMethod,
+    *,
+    drain_payload: DrainEvent,
+    publish_fn: Callable[[PikaBlockingChannel], None] | None = None,
+) -> None:
+    add_to_drain(channel, drain_payload)
+    if publish_fn is not None:
+        publish_fn(channel)
+    channel.basic_ack(delivery_tag=method.delivery_tag)

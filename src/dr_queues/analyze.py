@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from dr_queues.models import DrainEventKind
+from dr_queues.drain import DrainEventKind
 
 
 def _parse_ts(value: str) -> datetime:

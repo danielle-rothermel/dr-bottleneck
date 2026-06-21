@@ -3,7 +3,7 @@ from pathlib import Path
 
 import typer
 
-from dr_queues.connection import open_session
+from dr_queues.connection import ChannelSession
 from dr_queues.drain import dump_drain
 
 app = typer.Typer(add_completion=False)
@@ -16,7 +16,7 @@ def main(
         "--out",
     ),
 ) -> None:
-    session = open_session()
+    session = ChannelSession.open_session()
     try:
         events = dump_drain(session.channel)
     finally:

@@ -11,6 +11,7 @@ from dr_queues import (
     parse_workers_arg,
     write_run_report_jsonl,
 )
+from dr_queues.drain import DrainEventKind
 from dr_queues.humaneval_data import (
     DEFAULT_BUDGETS,
     expand_experiment_jobs,
@@ -24,7 +25,6 @@ from dr_queues.metrics_report import (
     summarize_metrics,
     write_metrics_jsonl,
 )
-from dr_queues.models import DrainEventKind, WorkflowStepKind
 from dr_queues.runner import (
     peek_run_events,
     run_workflow_in_process,
@@ -32,6 +32,7 @@ from dr_queues.runner import (
     setup_run_queues,
     spawn_all_stage_workers,
 )
+from dr_queues.workflow import WorkflowStepKind
 
 DEFAULT_WORKFLOW = Path("configs/workflows/humaneval_encode_decode.yaml")
 DEFAULT_WORKERS = "encode=8,decode=8,evaluate=32"

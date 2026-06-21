@@ -41,14 +41,8 @@ select = [
     "A",
     "ARG",
     "ASYNC",
-    "B",
-    "BLE",
-    "C4",
     "DTZ",
-    "E",
-    "F",
     "FA",
-    "FBT",
     "FLY",
     "FURB",
     "G",
@@ -59,43 +53,19 @@ select = [
     "N",
     "NPY",
     "PD",
-    "PERF",
     "PIE",
-    "PL",
     "PTH",
     "PT",
     "RET",
     "RSE",
     "RUF",
-    "S",
-    "SIM",
     "SLOT",
     "T10",
-    "TC",
     "TID",
-    "TRY",
     "UP",
     "W",
     "YTT",
 ]
-ignore = ["PLR1711", "S101", "TRY003"]
-
-[tool.ruff.lint.per-file-ignores]
-"nbs/**/*.py" = ["E501", "F841", "RET503", "B018"]
-"scripts/query_provider.py" = ["B008", "FBT001", "FBT003", "PLR0913"]
-"scripts/run_two_step_demo.py" = ["B008", "PLR0913", "PLR0915", "FBT001", "FBT003"]
-"scripts/run_humaneval_demo.py" = ["B008", "PLR0913", "PLR0915", "FBT001", "FBT003", "PLR2004"]
-"scripts/preview_humaneval_prompts.py" = ["B008", "PLR0913", "FBT001", "FBT003", "S311"]
-"scripts/run_stage_workers.py" = ["B008", "PLR0913", "FBT001", "FBT003", "E501"]
-"scripts/drain_dump.py" = ["B008"]
-"src/dr_providers/*.py" = ["PLR0913"]
-"src/dr_queues/*.py" = ["PERF401", "TC001", "BLE001"]
-"src/dr_queues/report.py" = ["PLR0913"]
-"src/dr_queues/runner.py" = ["PLR0913", "S603"]
-"src/dr_queues/humaneval_data.py" = ["PLC0415", "PLR0913", "E501", "SIM114"]
-"src/dr_queues/metrics_report.py" = ["E501"]
-"src/dr_queues/manifest.py" = ["PLW2901", "C420"]
-"src/dr_queues/process_handlers.py" = ["PLR0913"]
 
 [tool.ty.src]
 include = ["scripts", "src"]

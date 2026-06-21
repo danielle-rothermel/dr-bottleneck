@@ -1,12 +1,17 @@
 from threading import Event, Thread
 from typing import Any
 
-from pika.adapters.blocking_connection import BlockingChannel
-from pika.spec import Basic
+from dr_queues.connection import (
+    PikaBlockingChannel,
+    PikaDeliveryMethod,
+    PikaDeliveryTaggedMethod,
+    open_connection,
+)
+from dr_queues.drain import DrainEvent, DrainEventKind, add_to_drain
+from dr_queues.job import JobEnvelope
 
-from dr_queues.connection import delivery_tag, open_connection
-from dr_queues.drain import add_to_drain
-from dr_queues.models import DrainEvent, DrainEventKind, JobEnvelope
+STAGE_NAME = "terminal"
+THREAD_NAME = f"{STAGE_NAME}-tap"
 
 
 class TerminalTap:
@@ -29,7 +34,7 @@ class TerminalTap:
         self._thread = Thread(
             target=self._run,
             daemon=True,
-            name="terminal-tap",
+            name=THREAD_NAME,
         )
         self._thread.start()
 
@@ -64,14 +69,15 @@ class TerminalTap:
 
     def _on_message(
         self,
-        channel: BlockingChannel,
-        method: Basic.Deliver,
+        channel: PikaBlockingChannel,
+        method: PikaDeliveryMethod,
         _properties: Any,
         body: bytes,
     ) -> None:
         job = JobEnvelope.from_json(body)
+        delivery_tag = PikaDeliveryTaggedMethod(method).delivery_tag
         if job.run_id != self.run_id:
-            channel.basic_ack(delivery_tag=delivery_tag(method))
+            channel.basic_ack(delivery_tag=delivery_tag)
             return
 
         add_to_drain(
@@ -80,12 +86,12 @@ class TerminalTap:
                 run_id=job.run_id,
                 job_id=job.job_id,
                 lane=job.lane,
-                stage="terminal",
+                stage=STAGE_NAME,
                 event=DrainEventKind.TERMINAL,
                 payload=job.model_dump(),
             ),
         )
-        channel.basic_ack(delivery_tag=delivery_tag(method))
+        channel.basic_ack(delivery_tag=delivery_tag)
 
         self.terminal_count += 1
         if self.terminal_count >= self.expected_count:

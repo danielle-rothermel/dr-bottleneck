@@ -1,6 +1,23 @@
 from pathlib import Path
 
-from dr_queues.models import RunManifest
+from pydantic import BaseModel
+
+
+class RunStageManifest(BaseModel):
+    name: str
+    step_index: int
+    input_queue: str
+    output_queue: str
+    default_workers: int
+
+
+class RunManifest(BaseModel):
+    run_id: str
+    workflow_path: str
+    profiles_path: str
+    expected_jobs: int
+    queue_prefix: str
+    stages: list[RunStageManifest]
 
 
 def run_dir(run_id: str) -> Path:
