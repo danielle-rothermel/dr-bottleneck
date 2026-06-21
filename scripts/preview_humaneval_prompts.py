@@ -21,7 +21,8 @@ def _parse_budgets(value: str) -> list[int]:
 
 
 def _format_section(title: str, body: str) -> str:
-    return f"### {title}\n\n```\n{body.rstrip()}\n```\n"
+    divider = "-" * 50
+    return f"### {title}\n{divider}\n{body.rstrip()}\n{divider}\n\n"
 
 
 @app.command()
