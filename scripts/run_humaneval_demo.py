@@ -29,6 +29,7 @@ from dr_bottleneck import (
     tiny_experiment_filters,
 )
 from dr_bottleneck.runtime import format_worker_commands
+from dr_bottleneck.storage.inspect import format_mongo_inspect_hints
 from dr_bottleneck.workflow import WorkflowStepKind
 
 DEFAULT_WORKFLOW = Path("configs/workflows/humaneval_encode_decode.yaml")
@@ -53,6 +54,8 @@ def _mongo_hint(run_id: str) -> None:
         "Inspect results: see MONGODB_QUICKSTART.md "
         f"(run_id={run_id})",
     )
+    for command in format_mongo_inspect_hints(run_id, include_metrics=True):
+        typer.echo(command)
 
 
 @app.command()

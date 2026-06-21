@@ -21,6 +21,7 @@ from dr_bottleneck import (
     spawn_all_stage_workers,
 )
 from dr_bottleneck.runtime import format_worker_commands
+from dr_bottleneck.storage.inspect import format_mongo_inspect_hints
 
 DEFAULT_WORKFLOW = Path("configs/workflows/two_step_random.yaml")
 DEFAULT_WORKERS = "random_number=20,add_five=20"
@@ -33,6 +34,8 @@ def _mongo_hint(run_id: str) -> None:
         "Inspect results: see MONGODB_QUICKSTART.md "
         f"(run_id={run_id})",
     )
+    for command in format_mongo_inspect_hints(run_id):
+        typer.echo(command)
 
 
 @app.command()
