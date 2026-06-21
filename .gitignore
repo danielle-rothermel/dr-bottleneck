@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 .cache/
 logs/
+exports/
 *.egg-info/
 dist/
 build/

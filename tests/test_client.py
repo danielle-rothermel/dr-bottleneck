@@ -32,6 +32,7 @@ def test_call_llm_returns_record_shape() -> None:
     assert record["profile"] == "openrouter/google/gemini-2.5-flash/off/v1"
     assert record["request"]["model"] == "openrouter/google/gemini-2.5-flash"
     assert record["request"]["extra_body"] == {"reasoning": {"effort": "none"}}
+    assert "api_key" not in record["request"]
     assert record["response"]["choices"][0]["message"]["content"] == "Hello!"
     assert isinstance(record["latency_ms"], int)
     assert record["timestamp"]

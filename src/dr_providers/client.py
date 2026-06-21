@@ -14,6 +14,10 @@ def _serialize_response(response: Any) -> dict[str, Any]:
     return json.loads(json.dumps(response, default=str))
 
 
+def _request_for_record(kwargs: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in kwargs.items() if key != "api_key"}
+
+
 def assistant_text(response: Any) -> str:
     if isinstance(response, dict):
         choices = response.get("choices", [])
@@ -51,7 +55,7 @@ def call_llm(
     record: dict[str, Any] = {
         "timestamp": datetime.now(tz=UTC).isoformat(),
         "profile": profile,
-        "request": kwargs,
+        "request": _request_for_record(kwargs),
         "response": _serialize_response(response),
         "latency_ms": latency_ms,
     }

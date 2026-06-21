@@ -10,6 +10,7 @@ requires-python = ">=3.13"
 dependencies = [
     "litellm>=1.89.3",
     "marimo[recommended]>=0.23.10",
+    "pika>=1.4.1",
     "pydantic>=2.13.4",
     "pyyaml>=6.0.3",
     "typer>=0.26.7",
@@ -80,7 +81,11 @@ ignore = ["PLR1711", "S101", "TRY003"]
 [tool.ruff.lint.per-file-ignores]
 "nbs/**/*.py" = ["E501", "F841", "RET503", "B018"]
 "scripts/query_provider.py" = ["B008", "FBT001", "FBT003", "PLR0913"]
+"scripts/run_two_step_demo.py" = ["B008", "PLR0913", "PLR0915"]
+"scripts/drain_dump.py" = ["B008"]
 "src/dr_providers/*.py" = ["PLR0913"]
+"src/dr_queues/*.py" = ["PERF401", "TC001"]
+"src/dr_queues/report.py" = ["PLR0913"]
 
 [tool.ty.src]
 include = ["scripts", "src"]
