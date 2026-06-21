@@ -157,14 +157,47 @@ uv run python scripts/query_provider.py \
 ## Package layout
 
 - `src/dr_providers/` — LiteLLM / OpenRouter client and JSONL call logging
-- `src/dr_queues/` — RabbitMQ workflow primitives (queues, workers, drain,
-  workflow config, run reports, manifest, runner)
+- `src/dr_queues/` — RabbitMQ workflow pipeline (see module map below)
 
-### `dr_queues` API (prototype)
+### `dr_queues` module map
+
+Layers are ordered so only `connection.py` imports pika; higher layers
+compose the primitives below them.
+
+| Module | Role |
+|--------|------|
+| `connection.py` | AMQP connection, channel session, publish, delivery tags |
+| `queues.py` | Per-stage durable queue pairs (`build_stage_queues`) |
+| `drain.py` | Global `dr.drain` event queue (peek, dump, stage/terminal events) |
+| `job.py` | `JobEnvelope`, `StepExecution`, `ProcessStepResult`, `seed_jobs` |
+| `workflow.py` | YAML workflow config, LLM/process stage handlers |
+| `humaneval_data.py` | HumanEval+ task loading and experiment job expansion |
+| `workers.py` | `WorkerPool` — parallel stage consumers |
+| `tap.py` | `TerminalTap` — completion counter on final stage queue |
+| `runner.py` | Manifest setup, in-process orchestration, detached worker spawn |
+| `manifest.py` | `.runs/{run_id}/manifest.json` read/write |
+| `report.py` / `analyze.py` | Run report assembly and pipeline overlap analysis |
+| `metrics_report.py` | HumanEval metrics JSONL export |
+
+Stage queues chain by passing the previous stage's **full completed queue
+name** as the next stage's input (`build_stage_queues(pending=...)`).
+
+Open a channel via `ChannelSession.open_session()` (not a top-level
+`open_session` export).
+
+### Public API (import from `dr_queues`)
 
 - `setup_run_queues` / `run_workflow_in_process` — manifest-backed pipeline
-- `run_stage_workers.py` — detached single-stage worker pool
-- `WorkerPool` — parallel stage workers
+- `seed_jobs` / `seed_manifest_jobs` — enqueue `JobEnvelope` payloads
+- `WorkerPool` — parallel stage workers; `TerminalTap` — completion wait
 - `Workflow.from_yaml` — load workflow + LLM/process stage handlers
 - `build_run_report` / `write_run_report_jsonl` — assemble exportable reports
 - `build_metrics_rows` / `write_metrics_jsonl` — HumanEval metrics export
+- `peek_drain` / `DRAIN_QUEUE` — inspect global drain without purging
+
+Scripts:
+
+- `scripts/run_two_step_demo.py` — two-stage LLM pipeline demo
+- `scripts/run_humaneval_demo.py` — HumanEval encode/decode/eval sweep
+- `scripts/run_stage_workers.py` — detached single-stage worker pool
+- `scripts/drain_dump.py` — export and purge `dr.drain`
