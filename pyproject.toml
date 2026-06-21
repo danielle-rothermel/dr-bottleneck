@@ -8,8 +8,10 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "litellm>=1.89.3",
     "marimo[recommended]>=0.23.10",
     "pydantic>=2.13.4",
+    "pyyaml>=6.0.3",
     "typer>=0.26.7",
 ]
 
@@ -24,8 +26,11 @@ dev = [
     "ty>=0.0.51",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.ruff]
-include = ["scripts/**/*.py", "src/**/*.py"]
+include = ["scripts/**/*.py", "src/**/*.py", "tests/**/*.py"]
 line-length = 79
 
 [tool.ruff.lint]
@@ -74,6 +79,8 @@ ignore = ["PLR1711", "S101", "TRY003"]
 
 [tool.ruff.lint.per-file-ignores]
 "nbs/**/*.py" = ["E501", "F841", "RET503", "B018"]
+"scripts/query_provider.py" = ["B008", "FBT001", "FBT003", "PLR0913"]
+"src/dr_providers/*.py" = ["PLR0913"]
 
 [tool.ty.src]
 include = ["scripts", "src"]
