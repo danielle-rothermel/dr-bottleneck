@@ -1,25 +1,35 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
 
-from dr_queues.pipeline.job import JobEnvelope as QueueJobEnvelope
+from dr_queues import JobEnvelope
 from pydantic import BaseModel, Field
 
-StepHandler = Callable[[QueueJobEnvelope], QueueJobEnvelope]
+PAYLOAD_SAMPLE_KEY = "sample"
+PAYLOAD_METADATA_KEY = "metadata"
+PAYLOAD_SOURCE_CODE_KEY = "source_code"
+STEP_RECORD_TYPE_KEY = "type"
+LLM_STEP_RECORD_TYPE = "llm"
 
 
-class StepExecution(BaseModel):
+class BottleneckPayload(BaseModel):
+    sample: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    source_code: str = ""
+
+    def to_job_payload(self) -> dict[str, Any]:
+        return {
+            PAYLOAD_SAMPLE_KEY: self.sample,
+            PAYLOAD_METADATA_KEY: self.metadata,
+            PAYLOAD_SOURCE_CODE_KEY: self.source_code,
+        }
+
+
+class LlmStepRecord(BaseModel):
     step_index: int
     name: str
     profile: str
     model: str
-    temperature: float
-    top_p: float
-    reasoning_disabled: bool = False
-    effort: str | None = None
     prompt: str
     messages: list[dict[str, str]]
     request: dict[str, Any]
@@ -28,138 +38,63 @@ class StepExecution(BaseModel):
     latency_ms: int
     timestamp: str
 
+    def to_step_record(self) -> dict[str, Any]:
+        return {
+            STEP_RECORD_TYPE_KEY: LLM_STEP_RECORD_TYPE,
+            **self.model_dump(mode="json"),
+        }
 
-class ProcessStepResult(BaseModel):
-    step_index: int
-    name: str
-    handler: str
-    result: dict[str, Any] = Field(default_factory=dict)
-    timestamp: str = Field(
-        default_factory=lambda: datetime.now(tz=UTC).isoformat(),
+
+def payload_from_job(job: JobEnvelope) -> BottleneckPayload:
+    return BottleneckPayload(
+        sample=dict(job.payload.get(PAYLOAD_SAMPLE_KEY, {})),
+        metadata=dict(job.payload.get(PAYLOAD_METADATA_KEY, {})),
+        source_code=str(job.payload.get(PAYLOAD_SOURCE_CODE_KEY, "")),
     )
 
 
-class BottleneckJob(BaseModel):
-    run_id: str
-    job_id: str = Field(default_factory=lambda: str(uuid4()))
-    lane: str
-    repeat: int
-    step_index: int = 0
-    workflow_id: str
-    step_outputs: dict[str, str] = Field(default_factory=dict)
-    step_executions: dict[str, StepExecution] = Field(default_factory=dict)
-    step_process_results: dict[str, ProcessStepResult] = Field(
-        default_factory=dict,
+def terminal_payload_to_job(payload: dict[str, Any]) -> JobEnvelope:
+    return JobEnvelope.model_validate(payload)
+
+
+def llm_step_record(job: JobEnvelope, step_name: str) -> LlmStepRecord:
+    raw_record = job.step_records.get(step_name)
+    if raw_record is None:
+        msg = f"Job {job.job_id!r} has no step record for {step_name!r}."
+        raise ValueError(msg)
+    return LlmStepRecord.model_validate(
+        {
+            key: value
+            for key, value in raw_record.items()
+            if key != STEP_RECORD_TYPE_KEY
+        }
     )
-    sample: dict[str, Any] = Field(default_factory=dict)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    source_code: str = ""
-
-    def to_queue_job(self) -> QueueJobEnvelope:
-        step_records: dict[str, Any] = {}
-        for name, execution in self.step_executions.items():
-            step_records[name] = {
-                "type": "llm",
-                **execution.model_dump(),
-            }
-        for name, result in self.step_process_results.items():
-            step_records[name] = {
-                "type": "process",
-                **result.model_dump(),
-            }
-        return QueueJobEnvelope(
-            run_id=self.run_id,
-            job_id=self.job_id,
-            lane=self.lane,
-            repeat=self.repeat,
-            step_index=self.step_index,
-            pipeline_id=self.workflow_id,
-            payload={
-                "sample": self.sample,
-                "metadata": self.metadata,
-                "source_code": self.source_code,
-            },
-            step_outputs=dict(self.step_outputs),
-            step_records=step_records,
-        )
-
-    @classmethod
-    def from_queue_job(cls, job: QueueJobEnvelope) -> BottleneckJob:
-        step_executions: dict[str, StepExecution] = {}
-        step_process_results: dict[str, ProcessStepResult] = {}
-        for name, record in job.step_records.items():
-            if record.get("type") == "process":
-                step_process_results[name] = ProcessStepResult.model_validate(
-                    {
-                        key: value
-                        for key, value in record.items()
-                        if key != "type"
-                    },
-                )
-            else:
-                step_executions[name] = StepExecution.model_validate(
-                    {
-                        key: value
-                        for key, value in record.items()
-                        if key != "type"
-                    },
-                )
-
-        payload = job.payload
-        workflow_id = job.pipeline_id
-        if "workflow_id" in payload:
-            workflow_id = str(payload["workflow_id"])
-
-        return cls(
-            run_id=job.run_id,
-            job_id=job.job_id,
-            lane=job.lane,
-            repeat=job.repeat,
-            step_index=job.step_index,
-            workflow_id=workflow_id,
-            step_outputs={
-                key: str(value) for key, value in job.step_outputs.items()
-            },
-            step_executions=step_executions,
-            step_process_results=step_process_results,
-            sample=dict(payload.get("sample", {})),
-            metadata=dict(payload.get("metadata", {})),
-            source_code=str(payload.get("source_code", "")),
-        )
 
 
-def adapt_handler(
-    handler: Callable[[BottleneckJob], BottleneckJob],
-) -> StepHandler:
-    def wrapped(job: QueueJobEnvelope) -> QueueJobEnvelope:
-        bottleneck_job = BottleneckJob.from_queue_job(job)
-        updated = handler(bottleneck_job)
-        return updated.to_queue_job()
+def make_job_envelope(
+    *,
+    run_id: str,
+    lane: str,
+    repeat: int,
+    pipeline_id: str,
+    payload: BottleneckPayload,
+) -> JobEnvelope:
+    return JobEnvelope(
+        run_id=run_id,
+        lane=lane,
+        repeat=repeat,
+        step_index=0,
+        pipeline_id=pipeline_id,
+        payload=payload.to_job_payload(),
+    )
 
-    return wrapped
 
-
-def terminal_payload_to_job_dict(payload: dict[str, Any]) -> dict[str, Any]:
-    if "step_executions" in payload or "workflow_id" in payload:
-        return payload
-
-    queue_job = QueueJobEnvelope.model_validate(payload)
-    job = BottleneckJob.from_queue_job(queue_job)
-    return {
-        "job_id": job.job_id,
-        "lane": job.lane,
-        "repeat": job.repeat,
-        "workflow_id": job.workflow_id,
-        "step_outputs": job.step_outputs,
-        "step_executions": {
-            name: execution.model_dump()
-            for name, execution in job.step_executions.items()
-        },
-        "step_process_results": {
-            name: result.model_dump()
-            for name, result in job.step_process_results.items()
-        },
-        "sample": job.sample,
-        "metadata": job.metadata,
-        "source_code": job.source_code,
-    }
+__all__ = [
+    "LLM_STEP_RECORD_TYPE",
+    "BottleneckPayload",
+    "LlmStepRecord",
+    "llm_step_record",
+    "make_job_envelope",
+    "payload_from_job",
+    "terminal_payload_to_job",
+]

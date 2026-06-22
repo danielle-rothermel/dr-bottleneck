@@ -3,22 +3,23 @@ from __future__ import annotations
 from pathlib import Path
 
 import typer
-import yaml
+from dr_providers import Message, MessageRole, ReasoningSpec, SamplingControls
+from dr_providers.names import EffortLevel
 
-from dr_bottleneck.llm import (
-    MissingApiKeyError,
-    assistant_text,
-    call_llm,
-)
+from dr_bottleneck.llm import assistant_text, call_llm
+from dr_bottleneck.workflow.config import WorkflowConfig
+from dr_bottleneck.workflow.engine import Workflow
 
 DEFAULT_PROFILES_PATH = Path("configs/openrouter_profiles.yaml")
 
 app = typer.Typer(add_completion=False)
 
 
-def load_profiles(path: Path) -> dict:
-    with path.open(encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
+def _profile_resolver(profiles_path: Path) -> Workflow:
+    return Workflow(
+        WorkflowConfig(id="query", steps=[], lanes=[]),
+        profiles_path,
+    )
 
 
 def resolve_call_args(
@@ -30,49 +31,32 @@ def resolve_call_args(
     reasoning_disabled: bool,
     effort: str | None,
     profiles_path: Path,
-) -> tuple[str, float, float, bool, str | None, str | None]:
-    profile_name = profile
-    resolved_model = model
-    resolved_temperature = temperature
-    resolved_top_p = top_p
-    resolved_reasoning_disabled = reasoning_disabled
-    resolved_effort = effort
-
-    if profile_name is not None:
-        config = load_profiles(profiles_path)
-        profiles = config.get("profiles", {})
-        if profile_name not in profiles:
-            msg = f"Unknown profile: {profile_name}"
+) -> tuple[str, SamplingControls, ReasoningSpec | None, str | None]:
+    if profile is None:
+        if model is None:
+            msg = "Provide --model or --profile."
             raise typer.BadParameter(msg)
+        reasoning = None
+        if reasoning_disabled:
+            reasoning = ReasoningSpec(enabled=False)
+        elif effort is not None:
+            reasoning = ReasoningSpec(effort=EffortLevel(effort.lower()))
+        return (
+            model,
+            SamplingControls(temperature=temperature, top_p=top_p),
+            reasoning,
+            None,
+        )
 
-        profile_config = profiles[profile_name]
-        if resolved_model is None:
-            resolved_model = profile_config.get("model")
-        if profile_config.get("reasoning_disabled"):
-            resolved_reasoning_disabled = True
-        if (
-            profile_config.get("effort") is not None
-            and resolved_effort is None
-        ):
-            resolved_effort = profile_config.get("effort")
-
-        defaults = config.get("defaults", {})
-        if temperature == defaults.get("temperature", 0.7):
-            resolved_temperature = defaults.get("temperature", temperature)
-        if top_p == defaults.get("top_p", 0.95):
-            resolved_top_p = defaults.get("top_p", top_p)
-
-    if resolved_model is None:
-        msg = "Provide --model or --profile."
-        raise typer.BadParameter(msg)
-
+    resolved = _profile_resolver(profiles_path).resolve_profile(profile)
     return (
-        resolved_model,
-        resolved_temperature,
-        resolved_top_p,
-        resolved_reasoning_disabled,
-        resolved_effort,
-        profile_name,
+        resolved.model,
+        (
+            resolved.sampling
+            or SamplingControls(temperature=temperature, top_p=top_p)
+        ),
+        resolved.reasoning,
+        profile,
     )
 
 
@@ -94,14 +78,7 @@ def main(
     ),
 ) -> None:
     try:
-        (
-            resolved_model,
-            resolved_temperature,
-            resolved_top_p,
-            resolved_reasoning_disabled,
-            resolved_effort,
-            profile_name,
-        ) = resolve_call_args(
+        resolved_model, sampling, reasoning, profile_name = resolve_call_args(
             profile=profile,
             model=model,
             temperature=temperature,
@@ -114,21 +91,16 @@ def main(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
-    messages = [{"role": "user", "content": message}]
+    messages = [Message(role=MessageRole.USER, content=message)]
 
     try:
         record = call_llm(
-            resolved_model,
-            messages,
-            temperature=resolved_temperature,
-            top_p=resolved_top_p,
-            reasoning_disabled=resolved_reasoning_disabled,
-            effort=resolved_effort,
+            model=resolved_model,
+            messages=messages,
+            sampling=sampling,
+            reasoning=reasoning,
             profile=profile_name,
         )
-    except MissingApiKeyError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=1) from exc
     except Exception as exc:
         typer.echo(f"LLM call failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc

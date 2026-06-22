@@ -1,4 +1,4 @@
-id: humaneval_encode_decode_eval
+id: humaneval_encode_decode
 steps:
   - name: encode
     kind: llm
@@ -16,27 +16,17 @@ steps:
       """
       {encode}
       """
-  - name: evaluate
-    kind: process
-    handler: humaneval_compress_ast
-    config:
-      encode_step: encode
-      decode_step: decode
-      zstd_level: 22
 
 lanes:
   - id: nemotron
     steps:
       - profile: openrouter/nvidia/llama-3.3-nemotron-super-49b-v1.5/off/v1
       - profile: openrouter/nvidia/llama-3.3-nemotron-super-49b-v1.5/off/v1
-      - profile: null
   - id: gemini
     steps:
       - profile: openrouter/google/gemini-3.1-flash-lite/off/v1
       - profile: openrouter/google/gemini-3.1-flash-lite/off/v1
-      - profile: null
   - id: gpt-oss
     steps:
       - profile: openrouter/openai/gpt-oss-20b/low/v1
       - profile: openrouter/openai/gpt-oss-20b/low/v1
-      - profile: null

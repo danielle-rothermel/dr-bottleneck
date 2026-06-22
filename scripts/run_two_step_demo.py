@@ -6,21 +6,21 @@ from uuid import uuid4
 import typer
 
 from dr_bottleneck import (
-    TerminalTap,
+    MongoRunStore,
     Workflow,
     build_run_report,
-    create_event_sink,
     format_overlap_report,
-    manifest_path,
+    format_worker_commands,
     parse_workers_arg,
-    peek_run_events,
     persist_run_report,
-    run_workflow_in_process,
-    seed_manifest_jobs,
-    setup_run_queues,
-    spawn_all_stage_workers,
+    read_run_events,
+    run_bottleneck_in_process,
+    seed_bottleneck_run,
+    setup_bottleneck_run,
+    start_bottleneck_workers,
+    stop_workers,
+    wait_for_run,
 )
-from dr_bottleneck.runtime import format_worker_commands
 from dr_bottleneck.storage.inspect import format_mongo_inspect_hints
 
 DEFAULT_WORKFLOW = Path("configs/workflows/two_step_random.yaml")
@@ -31,8 +31,7 @@ app = typer.Typer(add_completion=False)
 
 def _mongo_hint(run_id: str) -> None:
     typer.echo(
-        "Inspect results: see MONGODB_QUICKSTART.md "
-        f"(run_id={run_id})",
+        f"Inspect results: see MONGODB_QUICKSTART.md (run_id={run_id})",
     )
     for command in format_mongo_inspect_hints(run_id):
         typer.echo(command)
@@ -71,71 +70,72 @@ def main(
     )
 
     typer.echo(f"run_id={resolved_run_id} expected_jobs={expected}")
-    typer.echo(f"manifest={manifest_path(resolved_run_id)}")
+    typer.echo("manifest=dr_queues.run_manifests")
 
-    manifest = setup_run_queues(
-        workflow=workflow,
-        run_id=resolved_run_id,
-        workers_by_stage=workers_by_stage,
-        workflow_path=workflow_path,
-        profiles_path=profiles_path,
-        expected_jobs=expected,
-    )
-
-    jobs = workflow.make_seed_jobs(run_id=resolved_run_id, repeats=repeats)
-    event_sink = create_event_sink()
-    final_stage = manifest.stages[-1]
-    tap = TerminalTap(
-        completed_queue=final_stage.output_queue,
-        run_id=resolved_run_id,
-        expected_count=expected,
-        event_sink=event_sink,
-    )
-
-    if no_wait:
-        seed_manifest_jobs(manifest, jobs)
-        typer.echo(f"Seeded {len(jobs)} jobs.")
-        if start_workers:
-            spawn_all_stage_workers(
-                manifest=manifest,
-                workers_by_stage=workers_by_stage,
-            )
-            typer.echo("Started detached stage workers.")
-        else:
-            typer.echo("Start workers with:")
-            for command in format_worker_commands(manifest):
-                typer.echo(f"  {command}")
-        return
-
-    tap.start()
-    seed_manifest_jobs(manifest, jobs)
-    typer.echo(f"Seeded {len(jobs)} jobs.")
-
-    if start_workers:
-        spawn_all_stage_workers(
-            manifest=manifest,
-            workers_by_stage=workers_by_stage,
-        )
-        typer.echo("Waiting for terminal events (detached workers)...")
-        if not tap.wait_for_completion(timeout=completion_timeout):
-            typer.echo("Timed out waiting for workflow completion.", err=True)
-            raise typer.Exit(code=1)
-        tap.stop()
-        tap.join(timeout=5)
-        if hasattr(event_sink, "close"):
-            event_sink.close()
-    else:
-        typer.echo("Running in-process workers...")
-        run_workflow_in_process(
-            manifest=manifest,
+    store = MongoRunStore()
+    try:
+        manifest = setup_bottleneck_run(
             workflow=workflow,
+            run_id=resolved_run_id,
             workers_by_stage=workers_by_stage,
-            completion_timeout=completion_timeout,
-            event_sink=event_sink,
-            tap=tap,
+            workflow_path=workflow_path,
+            profiles_path=profiles_path,
+            run_store=store,
         )
+        jobs = workflow.make_seed_jobs(
+            run_id=resolved_run_id,
+            repeats=repeats,
+        )
+        seed_bottleneck_run(manifest, jobs, run_store=store)
+        typer.echo(f"Seeded {len(jobs)} jobs.")
 
-    run_events = peek_run_events(resolved_run_id)
+        if no_wait:
+            if start_workers:
+                start_bottleneck_workers(
+                    manifest=manifest,
+                    workers_by_stage=workers_by_stage,
+                )
+                typer.echo("Started detached stage workers.")
+            else:
+                typer.echo("Start workers with:")
+                for command in format_worker_commands(manifest):
+                    typer.echo(f"  {command}")
+            return
+
+        if start_workers:
+            try:
+                start_bottleneck_workers(
+                    manifest=manifest,
+                    workers_by_stage=workers_by_stage,
+                )
+                typer.echo("Waiting for terminal events (detached workers)...")
+                status = wait_for_run(
+                    resolved_run_id,
+                    timeout=completion_timeout,
+                    run_store=store,
+                )
+                if not status.is_complete:
+                    typer.echo(
+                        "Timed out waiting for workflow completion.",
+                        err=True,
+                    )
+                    raise typer.Exit(code=1)
+            finally:
+                stop_workers(run_id=resolved_run_id, run_store=store)
+        else:
+            typer.echo("Running in-process workers...")
+            run_bottleneck_in_process(
+                manifest=manifest,
+                workflow=workflow,
+                workers_by_stage=workers_by_stage,
+                completion_timeout=completion_timeout,
+                run_store=store,
+            )
+
+        run_events = read_run_events(resolved_run_id, run_store=store)
+    finally:
+        store.close()
+
     step1_name = workflow.step_name(0)
     step2_name = workflow.step_name(1)
     report = build_run_report(

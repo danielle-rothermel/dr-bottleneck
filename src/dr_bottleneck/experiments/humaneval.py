@@ -1,83 +1,33 @@
 from __future__ import annotations
 
 import ast
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-import zstandard
-from pydantic import BaseModel
+from dr_code.datasets.humaneval_loader import load_humaneval_plus
+from dr_code.models.attempts import AttemptRecord
+from dr_code.models.humaneval import HumanEvalPlusTask
+from dr_queues import JobEnvelope
 
-from dr_bottleneck.handlers.registry import register
-from dr_bottleneck.job import BottleneckJob, ProcessStepResult
-from dr_bottleneck.workflow.config import WorkflowStep
+from dr_bottleneck.job import (
+    BottleneckPayload,
+    llm_step_record,
+    make_job_envelope,
+    terminal_payload_to_job,
+)
 
 if TYPE_CHECKING:
     from dr_bottleneck.workflow.engine import Workflow
 
-
-@register("humaneval_compress_ast")
-def humaneval_compress_ast(
-    job: BottleneckJob,
-    step: WorkflowStep,
-) -> BottleneckJob:
-    encode_step = step.config.get("encode_step", "encode")
-    decode_step = step.config.get("decode_step", "decode")
-    zstd_level = int(step.config.get("zstd_level", 22))
-
-    encoded_text = job.step_outputs.get(encode_step, "")
-    decoded_text = job.step_outputs.get(decode_step, "")
-
-    encoded_bytes = encoded_text.encode("utf-8")
-    encoded_len_raw = len(encoded_bytes)
-
-    compressor = zstandard.ZstdCompressor(level=zstd_level)
-    compressed = compressor.compress(encoded_bytes)
-    encoded_len_compressed = len(compressed)
-
-    ast_parse_ok = 0
-    try:
-        ast.parse(decoded_text)
-        ast_parse_ok = 1
-    except SyntaxError:
-        ast_parse_ok = 0
-
-    result = {
-        "encoded_len_raw": encoded_len_raw,
-        "encoded_len_compressed": encoded_len_compressed,
-        "ast_parse_ok": ast_parse_ok,
-        "zstd_level": zstd_level,
-    }
-
-    job.step_outputs[step.name] = (
-        f"raw={encoded_len_raw} compressed={encoded_len_compressed} "
-        f"ast={ast_parse_ok}"
-    )
-    job.step_process_results[step.name] = ProcessStepResult(
-        step_index=job.step_index,
-        name=step.name,
-        handler=step.handler or "humaneval_compress_ast",
-        result=result,
-        timestamp=datetime.now(tz=UTC).isoformat(),
-    )
-    return job
+DEFAULT_BUDGETS = [32, 64, 128, 256, 512, 1024]
+TINY_TASK_IDS = ["HumanEval/0", "HumanEval/1"]
+TINY_LANE_ID = "gemini"
+TINY_BUDGET = 128
+ENCODE_STEP_NAME = "encode"
+DECODE_STEP_NAME = "decode"
 
 
-class HumanEvalSampleInfo(BaseModel):
-    task_id: str = ""
-    prompt: str = ""
-    canonical_solution: str = ""
-    entry_point: str = ""
-
-
-class HumanEvalJobMetadata(BaseModel):
-    budget: int = 0
-
-
-def load_humanevalplus() -> list[dict]:
-    from datasets import load_dataset
-
-    dataset = load_dataset("evalplus/humanevalplus", split="test")
-    return [dict(row) for row in dataset]
+def load_humanevalplus() -> list[HumanEvalPlusTask]:
+    return load_humaneval_plus()
 
 
 def _strip_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
@@ -112,48 +62,35 @@ def build_source_code(prompt: str, canonical_solution: str) -> str:
     return strip_comments_and_docstrings(combined)
 
 
-DEFAULT_BUDGETS = [32, 64, 128, 256, 512, 1024]
-TINY_TASK_IDS = ["HumanEval/0", "HumanEval/1"]
-TINY_LANE_ID = "gemini"
-TINY_BUDGET = 128
-
-
 def expand_experiment_jobs(
     *,
     workflow: Workflow,
     run_id: str,
-    tasks: list[dict],
+    tasks: list[HumanEvalPlusTask],
     budgets: list[int],
     lane_ids: list[str],
     repeats: int,
-) -> list[BottleneckJob]:
-    jobs: list[BottleneckJob] = []
+) -> list[JobEnvelope]:
+    jobs: list[JobEnvelope] = []
     for lane_id in lane_ids:
         for task in tasks:
             for budget in budgets:
                 for repeat in range(repeats):
-                    sample = HumanEvalSampleInfo(
-                        task_id=task["task_id"],
-                        prompt=task["prompt"],
-                        canonical_solution=task["canonical_solution"],
-                        entry_point=task["entry_point"],
-                    )
                     jobs.append(
-                        BottleneckJob(
+                        make_job_envelope(
                             run_id=run_id,
                             lane=lane_id,
                             repeat=repeat,
-                            step_index=0,
-                            workflow_id=workflow.config.id,
-                            sample=sample.model_dump(),
-                            metadata=HumanEvalJobMetadata(
-                                budget=budget,
-                            ).model_dump(),
-                            source_code=build_source_code(
-                                task["prompt"],
-                                task["canonical_solution"],
+                            pipeline_id=workflow.config.id,
+                            payload=BottleneckPayload(
+                                sample=task.model_dump(mode="json"),
+                                metadata={"budget": budget},
+                                source_code=build_source_code(
+                                    task.prompt,
+                                    task.canonical_solution,
+                                ),
                             ),
-                        ),
+                        )
                     )
     return jobs
 
@@ -162,9 +99,9 @@ def tiny_experiment_filters(
     workflow: Workflow,
     *,
     budgets: list[int] | None = None,
-) -> tuple[list[str], list[int], list[dict]]:
+) -> tuple[list[str], list[int], list[HumanEvalPlusTask]]:
     all_tasks = load_humanevalplus()
-    task_by_id = {task["task_id"]: task for task in all_tasks}
+    task_by_id = {task.task_id: task for task in all_tasks}
     tasks = [task_by_id[task_id] for task_id in TINY_TASK_IDS]
     lane_ids = [TINY_LANE_ID]
     resolved_budgets = [TINY_BUDGET] if budgets is None else budgets
@@ -176,39 +113,96 @@ def tiny_experiment_filters(
 
 def make_preview_job(
     *,
-    task: dict,
+    task: HumanEvalPlusTask,
     budget: int,
     workflow_id: str,
     encode_output: str = "",
-) -> BottleneckJob:
-    job = BottleneckJob(
+) -> JobEnvelope:
+    job = make_job_envelope(
         run_id="preview",
         lane="preview",
         repeat=0,
-        step_index=0,
-        workflow_id=workflow_id,
-        sample=HumanEvalSampleInfo(
-            task_id=task["task_id"],
-            prompt=task["prompt"],
-            canonical_solution=task["canonical_solution"],
-            entry_point=task["entry_point"],
-        ).model_dump(),
-        metadata=HumanEvalJobMetadata(budget=budget).model_dump(),
-        source_code=build_source_code(
-            task["prompt"],
-            task["canonical_solution"],
+        pipeline_id=workflow_id,
+        payload=BottleneckPayload(
+            sample=task.model_dump(mode="json"),
+            metadata={"budget": budget},
+            source_code=build_source_code(
+                task.prompt,
+                task.canonical_solution,
+            ),
         ),
     )
     if encode_output:
-        job.step_outputs["encode"] = encode_output
+        job.step_outputs[ENCODE_STEP_NAME] = encode_output
     return job
 
 
 def filter_tasks(
-    tasks: list[dict],
+    tasks: list[HumanEvalPlusTask],
     task_ids: list[str] | None,
-) -> list[dict]:
+) -> list[HumanEvalPlusTask]:
     if not task_ids:
         return tasks
     wanted = set(task_ids)
-    return [task for task in tasks if task["task_id"] in wanted]
+    return [task for task in tasks if task.task_id in wanted]
+
+
+def attempts_from_terminal_payloads(
+    *,
+    run_id: str,
+    terminal_payloads: list[dict],
+) -> list[AttemptRecord]:
+    attempts: list[AttemptRecord] = []
+    for payload in terminal_payloads:
+        job = terminal_payload_to_job(payload)
+        sample = job.payload.get("sample", {})
+        metadata = job.payload.get("metadata", {})
+        if not isinstance(sample, dict):
+            msg = f"Job {job.job_id!r} has invalid sample payload."
+            raise ValueError(msg)
+        encode_text = str(job.step_outputs.get(ENCODE_STEP_NAME, ""))
+        decode_text = str(job.step_outputs.get(DECODE_STEP_NAME, ""))
+        if not encode_text or not decode_text:
+            msg = (
+                f"Job {job.job_id!r} is missing encode/decode output "
+                f"for run {run_id!r}."
+            )
+            raise ValueError(msg)
+        encode_record = llm_step_record(job, ENCODE_STEP_NAME)
+        decode_record = llm_step_record(job, DECODE_STEP_NAME)
+        attempts.append(
+            AttemptRecord.from_bottleneck_output(
+                run_id=run_id,
+                task_id=str(sample["task_id"]),
+                entry_point=str(sample["entry_point"]),
+                decoder_input=encode_text,
+                raw_output=decode_text,
+                encode_model=encode_record.model,
+                decode_model=decode_record.model,
+                encode_profile_id=encode_record.profile,
+                decode_profile_id=decode_record.profile,
+                extra={
+                    "bottleneck_run_id": run_id,
+                    "bottleneck_job_id": job.job_id,
+                    "lane": job.lane,
+                    "repeat": job.repeat,
+                    "budget": int(metadata.get("budget", 0)),
+                },
+            )
+        )
+    return attempts
+
+
+__all__ = [
+    "DECODE_STEP_NAME",
+    "DEFAULT_BUDGETS",
+    "ENCODE_STEP_NAME",
+    "attempts_from_terminal_payloads",
+    "build_source_code",
+    "expand_experiment_jobs",
+    "filter_tasks",
+    "load_humanevalplus",
+    "make_preview_job",
+    "strip_comments_and_docstrings",
+    "tiny_experiment_filters",
+]

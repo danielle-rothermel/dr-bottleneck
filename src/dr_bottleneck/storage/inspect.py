@@ -14,7 +14,7 @@ def pipeline_mongodb_url() -> str:
 def format_mongo_inspect_hints(
     run_id: str,
     *,
-    include_metrics: bool = False,
+    include_code_eval: bool = False,
 ) -> list[str]:
     bottleneck_url = bottleneck_mongodb_url()
     pipeline_url = pipeline_mongodb_url()
@@ -22,22 +22,23 @@ def format_mongo_inspect_hints(
         (
             "Run report:"
             f"\nmongosh {bottleneck_url} "
-            f'--eval \'db.run_reports.findOne({{run_id: "{run_id}"}})\''
+            f"--eval 'db.run_reports.findOne({{run_id: \"{run_id}\"}})'"
         ),
     ]
-    if include_metrics:
+    if include_code_eval:
         commands.append(
             (
-                "Metrics:"
+                "Linked code eval run:"
                 f"\nmongosh {bottleneck_url} "
-                f'--eval \'db.run_metrics.findOne({{run_id: "{run_id}"}})\''
+                f'--eval \'db.run_reports.findOne({{run_id: "{run_id}"}}, '
+                "{code_eval: 1, _id: 0})'"
             ),
         )
     commands.append(
         (
             "Pipeline event count:"
             f"\nmongosh {pipeline_url} "
-            f'--eval \'db.pipeline_events.countDocuments({{run_id: "{run_id}"}})\''
+            f"--eval 'db.pipeline_events.countDocuments({{run_id: \"{run_id}\"}})'"
         ),
     )
     return commands

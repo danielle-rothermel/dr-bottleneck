@@ -8,19 +8,15 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
-    "datasets>=5.0.0",
-    "dr-queues>=0.1.0",
-    "litellm>=1.89.3",
+    "dr-code",
+    "dr-providers>=0.1.0",
+    "dr-queues>=0.1.2",
     "marimo[recommended]>=0.23.10",
     "pydantic>=2.13.4",
     "pymongo>=4.16.0",
     "pyyaml>=6.0.3",
     "typer>=0.26.7",
-    "zstandard>=0.25.0",
 ]
-
-[project.scripts]
-dr-bottleneck-stage-worker = "dr_bottleneck.cli.stage_worker:run"
 
 [build-system]
 requires = ["hatchling"]
@@ -28,6 +24,16 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dr_bottleneck"]
+
+[tool.uv.sources]
+dr-code = { path = "../dr-code", editable = true }
+dr-providers = { path = "../dr-providers", editable = true }
+dr-queues = { path = "../dr-queues", editable = true }
+
+# code-eval pins ruff==0.8.4 for subprocess normalizers; dr-bottleneck dev
+# checks need the current shared ruff version.
+[tool.uv]
+override-dependencies = ["ruff>=0.15.18"]
 
 [dependency-groups]
 dev = [
