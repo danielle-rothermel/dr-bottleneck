@@ -207,10 +207,16 @@ class Workflow:
             "task_id": str(payload.sample.get("task_id", "")),
             "entry_point": str(payload.sample.get("entry_point", "")),
             "prompt": str(payload.sample.get("prompt", "")),
+            "signature": str(payload.sample.get("signature", "")),
+            "encoded_description": str(
+                payload.sample.get("encoded_description", "")
+            ),
             "canonical_solution": str(
                 payload.sample.get("canonical_solution", "")
             ),
         }
+        for key, value in payload.metadata.items():
+            ctx[key] = str(value)
         for index, step in enumerate(self.config.steps[:step_index]):
             output = job.step_outputs.get(step.name, "")
             ctx[step.name] = str(output)

@@ -7,6 +7,22 @@ from dr_bottleneck.analysis.overlap import (
     overlap_report,
 )
 from dr_bottleneck.analysis.report import build_run_report, persist_run_report
+from dr_bottleneck.candidate_eval import (
+    CANDIDATE_EVAL_STAGE,
+    DEFAULT_REQUEST_QUEUE,
+    REQUEST_PAYLOAD_KEY,
+    SCHEMA_VERSION,
+    CandidateAggregateMetrics,
+    CandidateEvalPhase,
+    CandidateEvalRequest,
+    CandidateEvalResult,
+    CandidateEvalStatus,
+    CandidateExampleResult,
+    CandidateExecutionMode,
+    CandidateMetricTarget,
+    CandidateVariant,
+    FailureBucket,
+)
 from dr_bottleneck.experiments.humaneval import (
     DEFAULT_BUDGETS,
     attempts_from_terminal_payloads,
@@ -32,9 +48,23 @@ from dr_bottleneck.runtime import (
 from dr_bottleneck.workflow import Workflow
 
 __all__ = [
+    "CANDIDATE_EVAL_STAGE",
     "DEFAULT_BUDGETS",
+    "DEFAULT_REQUEST_QUEUE",
     "HANDLERS_MODULE",
+    "REQUEST_PAYLOAD_KEY",
+    "SCHEMA_VERSION",
+    "CandidateAggregateMetrics",
+    "CandidateEvalPhase",
+    "CandidateEvalRequest",
+    "CandidateEvalResult",
+    "CandidateEvalStatus",
+    "CandidateExampleResult",
+    "CandidateExecutionMode",
+    "CandidateMetricTarget",
+    "CandidateVariant",
     "EventKind",
+    "FailureBucket",
     "JobEnvelope",
     "MongoRunStore",
     "RunManifest",
