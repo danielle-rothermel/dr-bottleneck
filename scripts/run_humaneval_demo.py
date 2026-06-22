@@ -4,36 +4,36 @@ from pathlib import Path
 from uuid import uuid4
 
 import typer
-from dr_queues.events.schema import EventKind
+from dr_code.pipeline.lifecycle import IN_PROCESS_MODE, run_eval_once
+from dr_code.pipeline.report import format_proof_summary
 
 from dr_bottleneck import (
     DEFAULT_BUDGETS,
-    TerminalTap,
+    EventKind,
+    MongoRunStore,
     Workflow,
-    build_metrics_rows,
+    attempts_from_terminal_payloads,
     build_run_report,
-    create_event_sink,
     expand_experiment_jobs,
     filter_tasks,
+    format_worker_commands,
     load_humanevalplus,
-    manifest_path,
     parse_workers_arg,
-    peek_run_events,
-    persist_run_metrics,
     persist_run_report,
-    run_workflow_in_process,
-    seed_manifest_jobs,
-    setup_run_queues,
-    spawn_all_stage_workers,
-    summarize_metrics,
+    read_run_events,
+    run_bottleneck_in_process,
+    seed_bottleneck_run,
+    setup_bottleneck_run,
+    start_bottleneck_workers,
+    stop_workers,
     tiny_experiment_filters,
+    wait_for_run,
 )
-from dr_bottleneck.runtime import format_worker_commands
 from dr_bottleneck.storage.inspect import format_mongo_inspect_hints
-from dr_bottleneck.workflow import WorkflowStepKind
 
 DEFAULT_WORKFLOW = Path("configs/workflows/humaneval_encode_decode.yaml")
-DEFAULT_WORKERS = "encode=8,decode=8,evaluate=32"
+DEFAULT_WORKERS = "encode=8,decode=8"
+DEFAULT_CODE_EVAL_WORKERS = "parse=8,test=8"
 
 app = typer.Typer(add_completion=False)
 
@@ -51,10 +51,12 @@ def _parse_task_ids(value: str | None) -> list[str] | None:
 
 def _mongo_hint(run_id: str) -> None:
     typer.echo(
-        "Inspect results: see MONGODB_QUICKSTART.md "
-        f"(run_id={run_id})",
+        f"Inspect results: see MONGODB_QUICKSTART.md (run_id={run_id})",
     )
-    for command in format_mongo_inspect_hints(run_id, include_metrics=True):
+    for command in format_mongo_inspect_hints(
+        run_id,
+        include_code_eval=True,
+    ):
         typer.echo(command)
 
 
@@ -63,6 +65,11 @@ def main(
     tiny: bool = typer.Option(False, "--tiny"),
     repeats: int = typer.Option(1, "--repeats"),
     workers: str = typer.Option(DEFAULT_WORKERS, "--workers"),
+    code_eval_workers: str = typer.Option(
+        DEFAULT_CODE_EVAL_WORKERS,
+        "--code-eval-workers",
+    ),
+    code_eval_mode: str = typer.Option(IN_PROCESS_MODE, "--code-eval-mode"),
     start_workers: bool = typer.Option(False, "--start-workers"),
     no_wait: bool = typer.Option(False, "--no-wait"),
     workflow_path: Path = typer.Option(DEFAULT_WORKFLOW, "--workflow"),
@@ -71,6 +78,7 @@ def main(
         "--profiles-path",
     ),
     run_id: str | None = typer.Option(None, "--run-id"),
+    code_eval_run_id: str | None = typer.Option(None, "--code-eval-run-id"),
     completion_timeout: float = typer.Option(3600.0, "--completion-timeout"),
     budgets: str = typer.Option(",".join(str(b) for b in DEFAULT_BUDGETS)),
     task_ids: str | None = typer.Option(None, "--task-ids"),
@@ -105,98 +113,100 @@ def main(
         repeats=repeats,
     )
     expected = len(jobs)
-    llm_calls = expected * sum(
-        1
-        for step in workflow.config.steps
-        if step.kind == WorkflowStepKind.LLM
-    )
+    llm_calls = expected * len(workflow.config.steps)
 
     typer.echo(f"run_id={resolved_run_id} expected_jobs={expected}")
     typer.echo(f"estimated_llm_calls={llm_calls}")
-    typer.echo(f"manifest={manifest_path(resolved_run_id)}")
+    typer.echo("manifest=dr_queues.run_manifests")
 
-    manifest = setup_run_queues(
-        workflow=workflow,
-        run_id=resolved_run_id,
-        workers_by_stage=workers_by_stage,
-        workflow_path=workflow_path,
-        profiles_path=profiles_path,
-        expected_jobs=expected,
-    )
-
-    event_sink = create_event_sink()
-    final_stage = manifest.stages[-1]
-    tap = TerminalTap(
-        completed_queue=final_stage.output_queue,
-        run_id=resolved_run_id,
-        expected_count=expected,
-        event_sink=event_sink,
-    )
-
-    if no_wait:
-        seed_manifest_jobs(manifest, jobs)
-        typer.echo(f"Seeded {len(jobs)} jobs.")
-        if effective_start_workers:
-            spawn_all_stage_workers(
-                manifest=manifest,
-                workers_by_stage=workers_by_stage,
-            )
-            typer.echo("Started detached stage workers.")
-        else:
-            typer.echo("Start workers with:")
-            for command in format_worker_commands(manifest):
-                typer.echo(f"  {command}")
-        return
-
-    tap.start()
-    seed_manifest_jobs(manifest, jobs)
-    typer.echo(f"Seeded {len(jobs)} jobs.")
-
-    if tiny or not effective_start_workers:
-        typer.echo("Running in-process workers...")
-        run_workflow_in_process(
-            manifest=manifest,
+    store = MongoRunStore()
+    try:
+        manifest = setup_bottleneck_run(
             workflow=workflow,
+            run_id=resolved_run_id,
             workers_by_stage=workers_by_stage,
-            completion_timeout=completion_timeout,
-            event_sink=event_sink,
-            tap=tap,
+            workflow_path=workflow_path,
+            profiles_path=profiles_path,
+            run_store=store,
         )
-    else:
-        spawn_all_stage_workers(
-            manifest=manifest,
-            workers_by_stage=workers_by_stage,
-        )
-        typer.echo("Waiting for terminal events (detached workers)...")
-        if not tap.wait_for_completion(timeout=completion_timeout):
-            typer.echo("Timed out waiting for workflow completion.", err=True)
-            raise typer.Exit(code=1)
-        tap.stop()
-        tap.join(timeout=5)
-        if hasattr(event_sink, "close"):
-            event_sink.close()
+        seed_bottleneck_run(manifest, jobs, run_store=store)
+        typer.echo(f"Seeded {len(jobs)} jobs.")
 
-    run_events = peek_run_events(resolved_run_id)
+        if no_wait:
+            if effective_start_workers:
+                start_bottleneck_workers(
+                    manifest=manifest,
+                    workers_by_stage=workers_by_stage,
+                )
+                typer.echo("Started detached stage workers.")
+            else:
+                typer.echo("Start workers with:")
+                for command in format_worker_commands(manifest):
+                    typer.echo(f"  {command}")
+            typer.echo("Skipping linked code eval because --no-wait was set.")
+            return
+
+        if tiny or not effective_start_workers:
+            typer.echo("Running bottleneck workers in process...")
+            run_bottleneck_in_process(
+                manifest=manifest,
+                workflow=workflow,
+                workers_by_stage=workers_by_stage,
+                completion_timeout=completion_timeout,
+                run_store=store,
+            )
+        else:
+            try:
+                start_bottleneck_workers(
+                    manifest=manifest,
+                    workers_by_stage=workers_by_stage,
+                )
+                typer.echo("Waiting for bottleneck terminal events...")
+                status = wait_for_run(
+                    resolved_run_id,
+                    timeout=completion_timeout,
+                    run_store=store,
+                )
+                if not status.is_complete:
+                    typer.echo(
+                        "Timed out waiting for workflow completion.",
+                        err=True,
+                    )
+                    raise typer.Exit(code=1)
+            finally:
+                stop_workers(run_id=resolved_run_id, run_store=store)
+
+        run_events = read_run_events(resolved_run_id, run_store=store)
+    finally:
+        store.close()
+
     terminal_payloads = [
         event["payload"]
         for event in run_events
         if event.get("event") == EventKind.TERMINAL
     ]
-    metrics_rows = build_metrics_rows(terminal_payloads)
-    summary = summarize_metrics(metrics_rows)
-
-    persist_run_metrics(
+    attempts = attempts_from_terminal_payloads(
         run_id=resolved_run_id,
-        rows=metrics_rows,
-        summary=summary,
+        terminal_payloads=terminal_payloads,
+    )
+    resolved_code_eval_run_id = (
+        code_eval_run_id or f"{resolved_run_id}-code-eval"
     )
     typer.echo(
-        f"Stored metrics in MongoDB for run_id={resolved_run_id}",
+        f"Running linked dr-code eval run_id={resolved_code_eval_run_id} "
+        f"attempts={len(attempts)}"
     )
-    typer.echo(
-        f"AST pass rate: {summary['passed']}/{summary['total']} "
-        f"({summary['pass_rate']:.1%})",
+    code_eval_result = run_eval_once(
+        attempts,
+        run_id=resolved_code_eval_run_id,
+        mode=code_eval_mode,
+        workers=code_eval_workers,
+        completion_timeout=completion_timeout,
+        skip_preflight=True,
+        overwrite=True,
     )
+    proof_report = code_eval_result.pipeline_result.proof_report
+    typer.echo(format_proof_summary(proof_report))
 
     report = build_run_report(
         workflow=workflow,
@@ -208,6 +218,8 @@ def main(
         run_events=run_events,
         step1_name=workflow.step_name(0),
         step2_name=workflow.step_name(1),
+        code_eval_run_id=resolved_code_eval_run_id,
+        code_eval_summary=proof_report.payload,
     )
     persist_run_report(report)
     typer.echo(f"Stored run report in MongoDB for run_id={resolved_run_id}")

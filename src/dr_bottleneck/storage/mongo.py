@@ -43,11 +43,15 @@ def get_bottleneck_collection(collection_name: str) -> Collection:
     return database[collection_name]
 
 
-def ensure_bottleneck_indexes(collection: Collection, *, unique_run_id: bool) -> None:
+def ensure_bottleneck_indexes(
+    collection: Collection, *, unique_run_id: bool
+) -> None:
     if unique_run_id:
         collection.create_index([("run_id", ASCENDING)], unique=True)
     else:
-        collection.create_index([("run_id", ASCENDING), ("timestamp", ASCENDING)])
+        collection.create_index(
+            [("run_id", ASCENDING), ("timestamp", ASCENDING)]
+        )
         collection.create_index([("timestamp", ASCENDING)])
 
 

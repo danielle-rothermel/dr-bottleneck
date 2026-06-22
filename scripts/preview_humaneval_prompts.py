@@ -84,11 +84,14 @@ def main(
         sections.append(
             "\n".join(
                 [
-                    f"## {task['task_id']}",
+                    f"## {task.task_id}",
                     "",
                     f"Budget: {budget}",
                     "",
-                    _format_section("Ground Truth", job.source_code),
+                    _format_section(
+                        "Ground Truth",
+                        str(job.payload["source_code"]),
+                    ),
                     _format_section("Encoder Prompt", encode_prompt),
                     _format_section("Decoder Prompt", decode_prompt),
                 ],

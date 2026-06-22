@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import re
 from unittest.mock import MagicMock
 
 import pytest
 from pymongo.errors import ConnectionFailure
 
-from dr_bottleneck.analysis.metrics import summarize_metrics
 from dr_bottleneck.storage.mongo import (
     MongoDocumentError,
     MongoPersistError,
@@ -24,7 +24,10 @@ def test_non_string_key_paths_finds_integer_key() -> None:
 
 
 def test_assert_mongo_safe_document_rejects_integer_keys() -> None:
-    with pytest.raises(MongoDocumentError, match="summary.by_budget.128"):
+    with pytest.raises(
+        MongoDocumentError,
+        match=re.escape("summary.by_budget.128"),
+    ):
         assert_mongo_safe_document({"summary": {"by_budget": {128: {}}}})
 
 
@@ -35,12 +38,8 @@ def test_coerce_mongo_document_stringifies_keys() -> None:
     assert_mongo_safe_document(prepared)
 
 
-def test_summarize_metrics_is_mongo_safe() -> None:
-    rows = [
-        {"model": "m1", "budget": 128, "pass": 1},
-        {"model": "m1", "budget": 64, "pass": 0},
-    ]
-    summary = summarize_metrics(rows)
+def test_nested_string_key_document_is_mongo_safe() -> None:
+    summary = {"by_budget": {"128": {"total": 1}}}
     assert_mongo_safe_document({"summary": summary})
 
 

@@ -1,71 +1,67 @@
 from __future__ import annotations
 
-import json
-import time
 from datetime import UTC, datetime
 from typing import Any
 
-import litellm
+from dr_providers import (
+    LlmRequest,
+    Message,
+    OpenRouterProvider,
+    ProviderName,
+    ReasoningSpec,
+    SamplingControls,
+)
 
-from dr_bottleneck.llm.openrouter import Message, build_completion_kwargs
-
-
-def _serialize_response(response: Any) -> dict[str, Any]:
-    if hasattr(response, "model_dump"):
-        return response.model_dump()
-    return json.loads(json.dumps(response, default=str))
-
-
-def _request_for_record(kwargs: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in kwargs.items() if key != "api_key"}
-
-
-def assistant_text(response: Any) -> str:
-    if isinstance(response, dict):
-        choices = response.get("choices", [])
-        if not choices:
-            return ""
-        message = choices[0].get("message", {})
-        return message.get("content") or ""
-
-    return response.choices[0].message.content or ""
+from dr_bottleneck.storage.llm_calls import append_llm_call
 
 
 def call_llm(
+    *,
     model: str,
     messages: list[Message],
-    *,
-    temperature: float,
-    top_p: float,
-    reasoning_disabled: bool = False,
-    effort: str | None = None,
+    reasoning: ReasoningSpec | None = None,
+    sampling: SamplingControls | None = None,
+    max_tokens: int | None = None,
     profile: str | None = None,
     run_id: str | None = None,
     job_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    kwargs = build_completion_kwargs(
-        model,
-        messages,
-        temperature=temperature,
-        top_p=top_p,
-        reasoning_disabled=reasoning_disabled,
-        effort=effort,
+    request_metadata = {
+        **(metadata or {}),
+        **({"profile": profile} if profile is not None else {}),
+        **({"run_id": run_id} if run_id is not None else {}),
+        **({"job_id": job_id} if job_id is not None else {}),
+    }
+    request = LlmRequest(
+        provider=ProviderName.OPENROUTER,
+        model=model,
+        messages=messages,
+        max_tokens=max_tokens,
+        reasoning=reasoning,
+        sampling=sampling,
+        metadata=request_metadata,
     )
-
-    started = time.perf_counter()
-    response = litellm.completion(**kwargs)
-    latency_ms = int((time.perf_counter() - started) * 1000)
+    with OpenRouterProvider() as provider:
+        response = provider.generate(request)
 
     record: dict[str, Any] = {
         "timestamp": datetime.now(tz=UTC).isoformat(),
         "profile": profile,
         "run_id": run_id,
         "job_id": job_id,
-        "request": _request_for_record(kwargs),
-        "response": _serialize_response(response),
-        "latency_ms": latency_ms,
+        "request": request.model_dump(mode="json"),
+        "response": response.model_dump(mode="json"),
+        "assistant_text": response.text,
+        "latency_ms": response.latency_ms,
     }
-    from dr_bottleneck.storage.llm_calls import append_llm_call
-
     append_llm_call(record)
     return record
+
+
+def assistant_text(response: dict[str, Any]) -> str:
+    text = response.get("text")
+    return text if isinstance(text, str) else ""
+
+
+__all__ = ["Message", "assistant_text", "call_llm"]

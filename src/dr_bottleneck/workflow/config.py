@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
 
 from pydantic import BaseModel, Field
 
 
 class WorkflowStepKind(StrEnum):
     LLM = "llm"
-    PROCESS = "process"
 
 
 class WorkflowStep(BaseModel):
@@ -16,8 +14,6 @@ class WorkflowStep(BaseModel):
     kind: WorkflowStepKind = WorkflowStepKind.LLM
     prompt: str | None = None
     prompt_template: str | None = None
-    handler: str | None = None
-    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class LaneStepProfile(BaseModel):
