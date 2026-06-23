@@ -10,7 +10,7 @@ requires-python = ">=3.13"
 dependencies = [
     "dr-code",
     "dr-providers>=0.1.0",
-    "dr-queues>=0.1.2",
+    "dr-queues>=0.1.4",
     "marimo[recommended]>=0.23.10",
     "pydantic>=2.13.4",
     "pymongo>=4.16.0",
@@ -28,7 +28,6 @@ packages = ["src/dr_bottleneck"]
 [tool.uv.sources]
 dr-code = { path = "../dr-code", editable = true }
 dr-providers = { path = "../dr-providers", editable = true }
-dr-queues = { path = "../dr-queues", editable = true }
 
 # code-eval pins ruff==0.8.4 for subprocess normalizers; dr-bottleneck dev
 # checks need the current shared ruff version.

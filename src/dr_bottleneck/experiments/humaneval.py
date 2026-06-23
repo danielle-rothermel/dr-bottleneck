@@ -174,7 +174,6 @@ def attempts_from_terminal_payloads(
             AttemptRecord.from_bottleneck_output(
                 run_id=run_id,
                 task_id=str(sample["task_id"]),
-                entry_point=str(sample["entry_point"]),
                 decoder_input=encode_text,
                 raw_output=decode_text,
                 encode_model=encode_record.model,

@@ -6,7 +6,8 @@ from typing import Any
 
 import typer
 from dr_queues import HandlerRegistry, JobEnvelope, MongoRunStore
-from dr_queues.amqp.connection import ChannelSession
+from dr_queues.amqp.session import broker_session
+from dr_queues.amqp.topology import declare_durable_queue
 from dr_queues.pipeline.workers import WorkerPool
 from dr_queues.runtime.lifecycle import WorkerHeartbeat, register_worker
 from dr_queues.runtime.models import WorkerRuntime
@@ -117,7 +118,8 @@ def main(
         "--worker-run-id",
     ),
 ) -> None:
-    ChannelSession.declare_durable_queue(queue_name=request_queue)
+    with broker_session() as broker:
+        declare_durable_queue(broker.channel, request_queue)
     run_store = MongoRunStore()
     record = register_worker(
         run_store=run_store,

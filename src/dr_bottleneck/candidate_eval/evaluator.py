@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -306,7 +305,6 @@ def _attempts_from_decoder_terminal_payloads(
             AttemptRecord.from_bottleneck_output(
                 run_id=run_id,
                 task_id=str(sample["task_id"]),
-                entry_point=str(sample["entry_point"]),
                 decoder_input=str(sample["encoded_description"]),
                 raw_output=decode_text,
                 decode_model=decode_record.model,
@@ -369,23 +367,15 @@ def _example_result(
     parse_outcome: ParseOutcome | None,
     test_outcome: TestOutcome | None,
 ) -> CandidateExampleResult:
-    extracted_code = parse_outcome.extracted_code if parse_outcome else None
-    entry_point_exists = _entry_point_exists(
-        extracted_code,
-        entry_point=attempt.entry_point,
+    expected_entry_point_present = bool(
+        test_outcome and test_outcome.expected_entry_point_present
     )
-    signature_compatible = _signature_compatible(
-        extracted_code,
-        entry_point=attempt.entry_point,
-        expected_signature=str(
-            attempt.provenance.extra.get("expected_signature", "")
-        ),
+    signature_compatible = bool(
+        test_outcome and test_outcome.selected_function_name
     )
     bucket = _failure_bucket(
         parse_outcome=parse_outcome,
         test_outcome=test_outcome,
-        entry_point_exists=entry_point_exists,
-        signature_compatible=signature_compatible,
     )
     raw_bytes, compressed_bytes = decoder_input_compression(
         attempt.decoder_input
@@ -398,7 +388,7 @@ def _example_result(
         repeat=int(extra.get("repeat", 0) or 0),
         sample_id=attempt.sample_id,
         parse_success=bool(parse_outcome and parse_outcome.parse_success),
-        entry_point_exists=entry_point_exists,
+        entry_point_exists=expected_entry_point_present,
         signature_compatible=signature_compatible,
         tests_ran=bool(test_outcome and test_outcome.tests_ran),
         all_tests_passed=(
@@ -414,90 +404,20 @@ def _example_result(
     )
 
 
-def _entry_point_exists(
-    extracted_code: str | None,
-    *,
-    entry_point: str,
-) -> bool:
-    function = _function_from_code(extracted_code, entry_point=entry_point)
-    return function is not None
-
-
-def _signature_compatible(
-    extracted_code: str | None,
-    *,
-    entry_point: str,
-    expected_signature: str,
-) -> bool:
-    actual = _function_from_code(extracted_code, entry_point=entry_point)
-    expected = _function_from_signature(
-        expected_signature,
-        entry_point=entry_point,
-    )
-    if actual is None or expected is None:
-        return False
-    return _argument_names(actual) == _argument_names(expected)
-
-
-def _function_from_code(
-    code: str | None,
-    *,
-    entry_point: str,
-) -> ast.FunctionDef | None:
-    if code is None:
-        return None
-    try:
-        tree = ast.parse(code)
-    except SyntaxError:
-        return None
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == entry_point:
-            return node
-    return None
-
-
-def _function_from_signature(
-    signature: str,
-    *,
-    entry_point: str,
-) -> ast.FunctionDef | None:
-    if not signature.strip():
-        return None
-    try:
-        tree = ast.parse(f"{signature.rstrip()}\n    pass\n")
-    except SyntaxError:
-        return None
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == entry_point:
-            return node
-    return None
-
-
-def _argument_names(function: ast.FunctionDef) -> tuple[str, ...]:
-    return tuple(
-        arg.arg
-        for arg in [
-            *function.args.posonlyargs,
-            *function.args.args,
-            *function.args.kwonlyargs,
-        ]
-    )
-
-
 def _failure_bucket(
     *,
     parse_outcome: ParseOutcome | None,
     test_outcome: TestOutcome | None,
-    entry_point_exists: bool,
-    signature_compatible: bool,
 ) -> FailureBucket:
     if parse_outcome is None or not parse_outcome.parse_success:
         return FailureBucket.INVALID_PYTHON
-    if not entry_point_exists:
+    if test_outcome is None:
+        return FailureBucket.SKIPPED
+    if not test_outcome.candidate_functions:
         return FailureBucket.MISSING_ENTRY_POINT
-    if not signature_compatible:
+    if test_outcome.skip_reason == "no_arity_matching_functions":
         return FailureBucket.INCOMPATIBLE_SIGNATURE
-    if test_outcome is None or test_outcome.skipped:
+    if test_outcome.skipped:
         return FailureBucket.SKIPPED
     if test_outcome.outcome_kind == "internal_error":
         return FailureBucket.INTERNAL_ERROR
@@ -523,9 +443,11 @@ def _feedback(
         )
         return f"Generated code did not parse: {reason}"
     if bucket == FailureBucket.MISSING_ENTRY_POINT:
-        return "Generated code parsed but did not define the expected entry point."
+        return "Generated code parsed but defined no top-level functions."
     if bucket == FailureBucket.INCOMPATIBLE_SIGNATURE:
-        return "Generated code defined the entry point with an incompatible signature."
+        return (
+            "Generated code parsed but defined no arity-compatible functions."
+        )
     if test_outcome is None:
         return "No test outcome was recorded for this attempt."
     if bucket == FailureBucket.SKIPPED:
